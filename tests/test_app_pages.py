@@ -69,3 +69,13 @@ def test_tabs_and_edit(temp_db):
     book = db.get_book(conn, a)
     assert (book["status"], book["notes"]) == ("Read", "Loved it")
     assert book["date_finished"]
+
+
+def test_password_gate(temp_db, monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "s3cret")
+    at = run("app.py")
+    assert at.text_input[0].label == "Password"
+    at.text_input[0].input("wrong").run()
+    assert at.error and at.error[0].value == "Wrong password"
+    at.text_input[0].input("s3cret").run()
+    assert not at.exception and at.session_state["authenticated"]
