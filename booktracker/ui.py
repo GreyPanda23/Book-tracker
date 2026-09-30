@@ -66,6 +66,14 @@ def check_password() -> bool:
     return False
 
 
+def is_dark() -> bool:
+    """True when the app is showing in dark mode."""
+    try:
+        return st.context.theme.type == "dark"
+    except Exception:
+        return False
+
+
 def cover(url: str | None, width: int = 90) -> None:
     st.image(url or PLACEHOLDER_COVER, width=width)
 
