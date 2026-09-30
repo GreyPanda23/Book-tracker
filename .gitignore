@@ -1,0 +1,19 @@
+# Secrets - never commit
+.env
+.streamlit/secrets.toml
+
+# Local data (the real database lives on the GitHub "data" branch)
+data/*.db
+data/*.sha
+data/*.download
+data/*.db-journal
+data/.last_price_run
+logs/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.DS_Store
