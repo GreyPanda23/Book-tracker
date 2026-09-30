@@ -1,0 +1,72 @@
+# Stores the weekly price check visits.
+#
+#   enabled:   true/false  - switch a store on or off
+#   online:    record the website price as an "Online" price
+#   physical:  also record it as the "In-Store (Dubai)" price for the branches listed
+#   branches:  Dubai branches (Magrudy's refreshes its list from its website automatically)
+#   backend:   "scraper" (built-in, free) or "apify" (placeholder for a paid Apify actor later)
+#   min_delay / max_delay: random pause in seconds between requests to this store
+#
+# Only bookstores with branches in Dubai have physical: true.
+
+stores:
+  - name: Magrudy's
+    module: magrudys
+    enabled: true
+    online: true
+    physical: true
+    branches: [Jumeirah Books, Mirdif City Center, Circle Mall, The Meadows Village,
+               Nad Al Sheba Mall, Al Amardi Mall, Waitrose Al Thanya, Waitrose Motor City]
+    backend: scraper
+
+  - name: Jashanmal
+    module: jashanmal
+    enabled: true
+    online: true
+    physical: true
+    branches: [Dubai Mall, Mall of the Emirates, Dubai Hills Mall, City Centre Mirdif,
+               City Centre Deira, Dubai Festival City Mall, Palm Jumeirah Mall, DIFC Gate Avenue]
+    notes: Not every Jashanmal store has a book section - check before visiting.
+    backend: scraper
+    min_delay: 8
+    max_delay: 15
+
+  - name: Kinokuniya
+    module: kinokuniya
+    enabled: true
+    online: true
+    physical: true
+    branches: [The Dubai Mall]
+    backend: scraper
+    min_delay: 5
+    max_delay: 10
+
+  - name: Amazon.ae
+    module: amazon_ae
+    enabled: true
+    online: true
+    physical: false
+    backend: scraper
+    min_delay: 6
+    max_delay: 12
+
+  - name: Noon
+    module: noon
+    enabled: true
+    online: true
+    physical: false
+    backend: scraper
+    min_delay: 6
+    max_delay: 12
+
+  - name: Virgin Megastore
+    module: virgin
+    enabled: true
+    online: true
+    physical: true
+    branches: [The Dubai Mall, Mall of the Emirates, Dubai Hills Mall, Dubai Marina Mall,
+               Ibn Battuta Mall, Mercato Mall, Mirdif City Centre, Palm Jumeirah Mall]
+    notes: >-
+      Virgin's robots.txt forbids its search pages, so it can't find books by ISBN.
+      Paste a Virgin product link for a book on the Prices page and it will be checked weekly.
+    backend: scraper

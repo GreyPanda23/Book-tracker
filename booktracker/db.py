@@ -4,6 +4,7 @@ Tables
 - books      one row per book, identified by ISBN-13
 - prices     one row per (book, store, in-store/online, date checked); never
              overwritten, so the full price history is kept
+- store_links product pages you pasted for stores that can't search by ISBN
 - runs       one row per weekly price update
 - fetch_log  errors and block/CAPTCHA detections from the price fetchers
 """
@@ -54,6 +55,13 @@ CREATE TABLE IF NOT EXISTS prices (
     run_id          INTEGER REFERENCES runs(id)
 );
 CREATE INDEX IF NOT EXISTS idx_prices_book ON prices(book_id, date_checked);
+
+CREATE TABLE IF NOT EXISTS store_links (
+    book_id    INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    store_name TEXT NOT NULL,
+    url        TEXT NOT NULL,              -- product page you pasted (e.g. Virgin)
+    PRIMARY KEY (book_id, store_name)
+);
 
 CREATE TABLE IF NOT EXISTS runs (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -274,6 +282,28 @@ def price_history(conn: sqlite3.Connection, book_id: int) -> list[dict]:
     return _rows(conn.execute(
         "SELECT * FROM prices WHERE book_id = ? AND price_aed IS NOT NULL "
         "ORDER BY date_checked, store_name", (book_id,)))
+
+
+def set_store_link(conn: sqlite3.Connection, book_id: int, store_name: str, url: str | None) -> None:
+    """Save (or with an empty url, remove) a product link for one store."""
+    if url and not url.startswith("https://"):
+        raise ValueError("the link must start with https://")
+    if url:
+        conn.execute("INSERT OR REPLACE INTO store_links (book_id, store_name, url) VALUES (?, ?, ?)",
+                     (book_id, store_name, url.strip()))
+    else:
+        conn.execute("DELETE FROM store_links WHERE book_id = ? AND store_name = ?", (book_id, store_name))
+    conn.commit()
+
+
+def store_links(conn: sqlite3.Connection, book_id: int | None = None) -> dict:
+    """{book_id: {store_name: url}} (or {store_name: url} for one book)."""
+    rows = conn.execute("SELECT * FROM store_links" + (" WHERE book_id = ?" if book_id else ""),
+                        (book_id,) if book_id else ()).fetchall()
+    links: dict = {}
+    for r in rows:
+        links.setdefault(r["book_id"], {})[r["store_name"]] = r["url"]
+    return links.get(book_id, {}) if book_id else links
 
 
 # --------------------------------------------------------------------------- #
