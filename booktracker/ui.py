@@ -9,6 +9,8 @@ from typing import Callable
 import streamlit as st
 
 from . import config, db, sync
+from .book_search import (BookResult, SORT_OPTIONS, author_counts, filter_and_sort,
+                          year_bounds)
 
 STATUS_ICONS = {"To Read": "📖", "Currently Reading": "📘", "Read": "✅", "Dropped": "🚫"}
 PLACEHOLDER_COVER = "https://placehold.co/128x192?text=No+cover"
@@ -80,3 +82,79 @@ def cover(url: str | None, width: int = 90) -> None:
 
 def stars(rating: int | None) -> str:
     return "★" * rating + "☆" * (5 - rating) if rating else ""
+
+
+def result_filters(results: list[BookResult], key: str) -> list[tuple[int, BookResult]]:
+    """Filter/sort controls for a list of search results.
+
+    Returns (original position, book) pairs that pass the filters, in the chosen
+    order. The original position keeps each card's buttons stable while the
+    list is being re-ordered. `key` must change for every new search so the
+    controls reset to the new results.
+    """
+    shown = list(enumerate(results))
+    if len(results) < 2:
+        return shown
+    bounds = year_bounds(results)
+    authors = author_counts(results)
+    has_ratings = any(b.rating for b in results)
+    with st.expander("Filters & sorting", expanded=True):
+        c1, c2 = st.columns([3, 2])
+        years = bounds or (None, None)
+        if bounds and bounds[0] < bounds[1]:
+            years = c1.slider("Released between", bounds[0], bounds[1], bounds, key=f"{key}_years")
+        sort = c2.selectbox("Sort by", SORT_OPTIONS, key=f"{key}_sort")
+        picked: list[str] = []
+        if len(authors) > 1:
+            counts = dict(authors)
+            picked = st.multiselect("Only these authors", list(counts), key=f"{key}_authors",
+                                    format_func=lambda a: f"{a} ({counts[a]})",
+                                    placeholder="All authors")
+        c3, c4, c5 = st.columns(3)
+        min_rating = c3.slider("Minimum rating ★", 0.0, 5.0, 0.0, 0.5, key=f"{key}_rating",
+                               help="Books with no rating are hidden when this is above 0") \
+            if has_ratings else 0.0
+        keep_unknown = c4.checkbox("Include books with no year", value=True, key=f"{key}_unknown")
+        hide_owned = c5.checkbox("Hide books I already have", value=False, key=f"{key}_owned")
+    owned: set[str] = set()
+    if hide_owned:
+        conn = get_conn()
+        owned = {b["isbn"] for b in db.list_books(conn) if b["isbn"]}
+        conn.close()
+    kept = filter_and_sort(results, years[0], years[1], sort, keep_unknown, picked, min_rating, owned)
+    position = {id(b): i for i, b in shown}
+    shown = [(position[id(b)], b) for b in kept]
+    st.caption(f"Showing {len(shown)} of {len(results)} books")
+    return shown
+
+
+def result_cards(shown: list[tuple[int, BookResult]], key: str) -> None:
+    """One card per search result with a status picker and an Add button."""
+    conn = get_conn()
+    try:
+        for i, book in shown:
+            with st.container(border=True):
+                left, right = st.columns([1, 4])
+                with left:
+                    cover(book.cover_url, width=80)
+                with right:
+                    st.markdown(f"**{book.title}**")
+                    rating = f"★ {book.rating:.1f}" if book.rating else None
+                    st.caption(" · ".join(filter(None, [
+                        book.author, book.year, book.genre, rating,
+                        f"ISBN {book.isbn}" if book.isbn else "no ISBN"])))
+                    existing = db.get_book_by_isbn(conn, book.isbn) if book.isbn else None
+                    if existing:
+                        st.info(f"Already in your list ({existing['status']}).")
+                        continue
+                    c1, c2 = st.columns([2, 1])
+                    status = c1.selectbox("Status", db.STATUSES, key=f"{key}_status_{i}",
+                                          label_visibility="collapsed")
+                    if c2.button("Add", key=f"{key}_add_{i}", type="primary"):
+                        fields = book.to_db_fields()
+                        if save(lambda c: db.add_book(c, status=status, **fields),
+                                f"Add book: {book.title}"):
+                            st.toast(f"Added “{book.title}” to {status}")
+                            st.rerun()
+    finally:
+        conn.close()

@@ -8,6 +8,7 @@ app keeps working without any key.
 from __future__ import annotations
 
 import logging
+import random
 import re
 import unicodedata
 from dataclasses import asdict, dataclass, field
@@ -65,10 +66,12 @@ class BookResult:
     year: str | None = None
     source: str = ""
     subjects: list[str] = field(default_factory=list)
+    rating: float | None = None       # average reader rating (0-5), for filtering/sorting only
+    popularity: int | None = None     # how many readers rated / shelved it, for sorting only
 
     def to_db_fields(self) -> dict:
         data = asdict(self)
-        for key in ("year", "source", "subjects"):
+        for key in ("year", "source", "subjects", "rating", "popularity"):
             data.pop(key)
         return data
 
@@ -114,6 +117,8 @@ def _parse_google(item: dict) -> BookResult | None:
         year=(info.get("publishedDate") or "")[:4] or None,
         source="Google Books",
         subjects=info.get("categories", []),
+        rating=info.get("averageRating"),
+        popularity=info.get("ratingsCount"),
     )
 
 
@@ -168,11 +173,14 @@ def _parse_openlibrary(doc: dict) -> BookResult | None:
         year=str(doc["first_publish_year"]) if doc.get("first_publish_year") else None,
         source="Open Library",
         subjects=subjects,
+        rating=round(doc["ratings_average"], 2) if doc.get("ratings_average") else None,
+        popularity=doc.get("want_to_read_count") or doc.get("ratings_count"),
     )
 
 
 OL_FIELDS = ("key,title,author_name,author_key,isbn,cover_i,subject,first_publish_year,"
-             "editions,editions.isbn,editions.cover_i,editions.title")
+             "editions,editions.isbn,editions.cover_i,editions.title,"
+             "ratings_average,ratings_count,want_to_read_count")
 
 
 def _openlibrary(field_name: str, value: str, limit: int) -> list[BookResult]:
@@ -253,7 +261,7 @@ def _title_and_author(query: str, limit: int,
 # --------------------------------------------------------------------------- #
 # Filtering and sorting results by release year
 # --------------------------------------------------------------------------- #
-SORT_OPTIONS = ("Best match", "Newest first", "Oldest first")
+SORT_OPTIONS = ("Best match", "Highest rated", "Most popular", "Newest first", "Oldest first")
 
 
 def year_of(book: BookResult) -> int | None:
@@ -266,27 +274,156 @@ def year_bounds(books: list[BookResult]) -> tuple[int, int] | None:
     return (min(years), max(years)) if years else None
 
 
+def authors_of(book: BookResult) -> list[str]:
+    return [a.strip() for a in (book.author or "").split(",") if a.strip()]
+
+
+def author_counts(books: list[BookResult]) -> list[tuple[str, int]]:
+    """Authors in the results, most books first (each author counted once per book)."""
+    counts: dict[str, int] = {}
+    for b in books:
+        for a in dict.fromkeys(authors_of(b)):
+            counts[a] = counts.get(a, 0) + 1
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0].lower()))
+
+
+def _weighted_rating(book: BookResult, typical: float = 3.7, weight: int = 50) -> float:
+    """Rating pulled toward the average when few readers back it (0 if unrated).
+
+    Keeps a 4.9 from 3 readers below a 4.5 from 2,000 readers.
+    """
+    if not book.rating:
+        return 0
+    n = book.popularity or 0
+    return (n * book.rating + weight * typical) / (n + weight)
+
+
 def filter_and_sort(books: list[BookResult], first_year: int | None = None,
                     last_year: int | None = None, sort: str = "Best match",
-                    keep_unknown_year: bool = True) -> list[BookResult]:
-    """Keep books released between the two years (inclusive) and order them.
+                    keep_unknown_year: bool = True, authors: list[str] | None = None,
+                    min_rating: float = 0, hide_isbns: set[str] | None = None) -> list[BookResult]:
+    """Keep the books that pass every filter and put them in the chosen order.
 
-    Books with no known year are kept (shown last when sorting by date) unless
-    `keep_unknown_year` is False.
+    - years: inclusive range; books with no known year are kept unless
+      `keep_unknown_year` is False (and are listed last when sorting by date)
+    - authors: keep books by any of these authors (empty/None = everyone)
+    - min_rating: drop books rated below this (books with no rating are dropped too)
+    - hide_isbns: drop books whose ISBN is in this set (e.g. already in your list)
     """
+    chosen = set(authors or [])
     out = []
     for b in books:
         y = year_of(b)
         if y is None:
-            if keep_unknown_year:
-                out.append(b)
-        elif (first_year is None or y >= first_year) and (last_year is None or y <= last_year):
-            out.append(b)
-    if sort in ("Newest first", "Oldest first"):
-        newest = sort == "Newest first"
-        known = sorted((b for b in out if year_of(b)), key=year_of, reverse=newest)
-        out = known + [b for b in out if not year_of(b)]
+            if not keep_unknown_year:
+                continue
+        elif (first_year is not None and y < first_year) or (last_year is not None and y > last_year):
+            continue
+        if chosen and not chosen & set(authors_of(b)):
+            continue
+        if min_rating and (b.rating or 0) < min_rating:
+            continue
+        if hide_isbns and b.isbn in hide_isbns:
+            continue
+        out.append(b)
+
+    def ranked(key, reverse=True):
+        known = sorted((b for b in out if key(b)), key=key, reverse=reverse)
+        return known + [b for b in out if not key(b)]
+
+    if sort == "Newest first":
+        return ranked(year_of)
+    if sort == "Oldest first":
+        return ranked(year_of, reverse=False)
+    if sort == "Highest rated":
+        return ranked(_weighted_rating)
+    if sort == "Most popular":
+        return ranked(lambda b: b.popularity or 0)
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Browse by genre
+# --------------------------------------------------------------------------- #
+GENRE_NAMES = [name for name, _ in GENRE_KEYWORDS]
+GENRE_LIMIT = 60   # books fetched per genre search
+
+
+def _genre_term(name: str) -> str:
+    """The subject word the book sites use for one of our friendly genres."""
+    for genre, words in GENRE_KEYWORDS:
+        if genre == name:
+            return words[0]
+    return name.lower()
+
+
+def _quote(term: str) -> str:
+    return '"' + term.replace('"', "") + '"'
+
+
+def _genre_openlibrary(genres: list[str], match_all: bool, keyword: str, limit: int) -> list[BookResult]:
+    terms = [f"subject:{_quote(_genre_term(g))}" for g in genres]
+    q = " ".join(terms) if match_all else "(" + " OR ".join(terms) + ")"
+    if keyword.strip():
+        q += f" {keyword.strip()}"
+    return _openlibrary("q", q, limit)
+
+
+def _genre_google(genres: list[str], match_all: bool, keyword: str, limit: int) -> list[BookResult]:
+    extra = f" {keyword.strip()}" if keyword.strip() else ""
+    if match_all:
+        return _google(" ".join(f"subject:{_quote(_genre_term(g))}" for g in genres) + extra, limit)
+    per_genre = max(5, min(40, limit // len(genres)))   # Google has no OR: one search per genre
+    merged: list[BookResult] = []
+    for g in genres:
+        merged += _google(f"subject:{_quote(_genre_term(g))}{extra}", per_genre)
+    return merged
+
+
+def search_by_genres(genres: list[str], match_all: bool = True, keyword: str = "",
+                     limit: int = GENRE_LIMIT) -> tuple[list[BookResult], str]:
+    """Books in all (or any) of the chosen genres, optionally narrowed by a keyword.
+
+    Open Library is tried first (it has reader ratings to sort by), then
+    Google Books. Returns (results, message about the source used).
+    """
+    genres = [g for g in genres if g]
+    if not genres:
+        return [], "Pick at least one genre."
+    problems = []
+    for name, fn in (("Open Library", _genre_openlibrary), ("Google Books", _genre_google)):
+        try:
+            results = _dedupe(fn(genres, match_all, keyword, limit))
+        except Exception as exc:
+            log.warning("%s genre search failed: %s", name, exc)
+            problems.append(f"{name} unavailable")
+            continue
+        if results:
+            note = f"Results from {name}" + (f" ({'; '.join(problems)})" if problems else "")
+            return results[:limit], note
+        problems.append(f"{name} found nothing")
+    return [], "No books found. " + "; ".join(problems)
+
+
+def surprise_me(genres: list[str] | None = None, owned_isbns: set[str] | None = None,
+                count: int = 5, rng: random.Random | None = None) -> tuple[list[BookResult], str]:
+    """A few random, well-liked books you don't have yet.
+
+    Uses the genres you picked (any of them); with none picked, one random genre.
+    Prefers books with a decent rating from enough readers, and falls back to
+    anything found if too few qualify.
+    """
+    rng = rng or random.Random()
+    owned = owned_isbns or set()
+    picked = [g for g in (genres or []) if g] or [rng.choice(GENRE_NAMES)]
+    results, note = search_by_genres(picked, match_all=False)
+    fresh = [b for b in results if not (b.isbn and b.isbn in owned)]
+    liked = [b for b in fresh if (b.rating or 0) >= 3.5 and (b.popularity or 0) >= 20]
+    pool = liked if len(liked) >= count else fresh
+    if not pool:
+        return [], note
+    chosen = rng.sample(pool, min(count, len(pool)))
+    return chosen, f"🎲 Surprise! {len(chosen)} random picks from {', '.join(picked)}. {note}"
 
 
 # --------------------------------------------------------------------------- #

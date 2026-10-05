@@ -121,3 +121,68 @@ def test_year_filter_and_sort():
     assert [b.title for b in out] == ["A", "B", "C"]
     assert [b.title for b in bs.filter_and_sort(books)] == ["B", "A", "C", "Nodate"]  # unchanged order
     assert bs.year_bounds([_yr("x", None)]) is None
+
+
+def _rated(title, author, year, rating=None, pop=None, isbn=None):
+    return bs.BookResult(title=title, author=author, year=year, rating=rating, popularity=pop, isbn=isbn)
+
+
+def test_filter_by_author_rating_and_owned():
+    books = [_rated("A", "Ann Lee", "2001", 4.5, 100, "1"), _rated("B", "Bob Ray", "2005", 3.0, 500, "2"),
+             _rated("C", "Ann Lee, Bob Ray", "2010", None, 50, "3")]
+    assert [b.title for b in bs.filter_and_sort(books, authors=["Ann Lee"])] == ["A", "C"]
+    assert [b.title for b in bs.filter_and_sort(books, min_rating=4)] == ["A"]
+    assert [b.title for b in bs.filter_and_sort(books, hide_isbns={"2"})] == ["A", "C"]
+    assert [b.title for b in bs.filter_and_sort(books, sort="Most popular")] == ["B", "A", "C"]
+    assert [b.title for b in bs.filter_and_sort(books, sort="Highest rated")] == ["A", "B", "C"]
+    assert bs.author_counts(books) == [("Bob Ray", 2), ("Ann Lee", 2)] or \
+        bs.author_counts(books)[0][1] == 2
+
+
+def test_genre_query_all_vs_any(monkeypatch):
+    seen = []
+    monkeypatch.setattr(bs, "_openlibrary", lambda f, v, n: seen.append((f, v)) or [_rated("X", "Y", "2000")])
+    res, note = bs.search_by_genres(["Fantasy", "Science Fiction"], match_all=True, keyword="dragons")
+    assert seen[-1] == ("q", 'subject:"fantasy" subject:"science fiction" dragons')
+    bs.search_by_genres(["Fantasy", "Horror"], match_all=False)
+    assert seen[-1] == ("q", '(subject:"fantasy" OR subject:"horror")')
+    assert res and "Open Library" in note
+    assert bs.search_by_genres([])[0] == []
+
+
+def test_genre_search_falls_back_to_google(monkeypatch):
+    def down(*a):
+        raise RuntimeError("down")
+    monkeypatch.setattr(bs, "_openlibrary", down)
+    monkeypatch.setattr(bs, "_google", lambda q, n: [_rated("G", "H", "1999")])
+    res, note = bs.search_by_genres(["Mystery"])
+    assert [b.title for b in res] == ["G"] and "Google Books" in note and "Open Library unavailable" in note
+
+
+def test_rating_not_saved_to_database():
+    fields = _rated("T", "A", "2000", 4.2, 10).to_db_fields()
+    assert "rating" not in fields and "popularity" not in fields
+
+
+def test_highest_rated_discounts_books_with_few_readers():
+    few = _rated("Few", "A", "2000", 4.9, 3)
+    many = _rated("Many", "B", "2000", 4.5, 2000)
+    assert [b.title for b in bs.filter_and_sort([few, many], sort="Highest rated")] == ["Many", "Few"]
+
+
+def test_surprise_me_picks_liked_unowned_books(monkeypatch):
+    import random
+    books = [_rated(f"Good{i}", "A", "2000", 4.2, 100, str(i)) for i in range(8)]
+    books += [_rated("Meh", "A", "2000", 2.0, 100, "90"), _rated("Rare", "A", "2000", 4.9, 2, "91")]
+    monkeypatch.setattr(bs, "search_by_genres", lambda g, match_all=True, keyword="", limit=60: (books, "from test"))
+    picks, note = bs.surprise_me(["Fantasy"], owned_isbns={"0", "1"}, rng=random.Random(1))
+    assert len(picks) == 5 and all(b.title.startswith("Good") for b in picks)
+    assert not {b.isbn for b in picks} & {"0", "1"}
+    assert "Fantasy" in note and "Surprise" in note
+    picks, note = bs.surprise_me(None, rng=random.Random(2))   # no genre: one random genre is used
+    assert len(picks) == 5 and any(g in note for g in bs.GENRE_NAMES)
+
+
+def test_surprise_me_with_nothing_found(monkeypatch):
+    monkeypatch.setattr(bs, "search_by_genres", lambda *a, **k: ([], "No books found."))
+    assert bs.surprise_me(["Poetry"]) == ([], "No books found.")

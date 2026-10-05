@@ -68,6 +68,40 @@ def test_author_results_can_be_filtered_by_year(temp_db, monkeypatch):
     assert [m.value for m in at.markdown if m.value.startswith("**")][:2] == ["**Eldest**", "**Murtagh**"]
 
 
+def test_discover_by_genre_page(temp_db, monkeypatch):
+    fake = [BookResult(title="Storm Front", author="Jim Butcher", year="2000", rating=3.6, source="t"),
+            BookResult(title="Gideon the Ninth", author="Tamsyn Muir", year="2019", rating=4.2, source="t")]
+    calls = []
+    monkeypatch.setattr(book_search, "search_by_genres",
+                        lambda genres, match_all=True, keyword="", limit=60:
+                        calls.append((genres, match_all, keyword)) or (fake, "Results from test"))
+    at = run("views/discover.py")
+    at.multiselect[0].set_value(["Fantasy", "Mystery"])
+    at.radio[0].set_value("Any of them")
+    at.button[0].click().run()   # Find books
+    assert not at.exception
+    assert calls == [(["Fantasy", "Mystery"], False, "")]
+    assert len([b for b in at.button if b.label == "Add"]) == 2
+    at.multiselect[1].set_value(["Tamsyn Muir"]).run()   # author filter
+    assert len([b for b in at.button if b.label == "Add"]) == 1
+    [b for b in at.button if b.label == "Add"][0].click().run()
+    conn = db.connect(temp_db)
+    assert [b["title"] for b in db.list_books(conn)] == ["Gideon the Ninth"]
+    assert db.list_books(conn)[0]["author"] == "Tamsyn Muir"
+
+
+def test_surprise_me_button(temp_db, monkeypatch):
+    fake = [BookResult(title="Mistborn", author="Brandon Sanderson", year="2006", source="t")]
+    seen = []
+    monkeypatch.setattr(book_search, "surprise_me",
+                        lambda genres, owned: seen.append(genres) or (fake, "🎲 Surprise!"))
+    at = run("views/discover.py")
+    at.multiselect[0].set_value(["Fantasy"])
+    [b for b in at.button if "Surprise" in b.label][0].click().run()
+    assert not at.exception and seen == [["Fantasy"]]
+    assert [m.value for m in at.markdown if m.value.startswith("**")] == ["**Mistborn**"]
+
+
 def test_tabs_and_edit(temp_db):
     conn = db.connect(temp_db)
     a = db.add_book(conn, title="Dune", isbn="9780441172719")
