@@ -19,6 +19,7 @@ from typing import Any, Iterable
 from . import config, isbn as isbn_utils
 
 STATUSES = ("To Read", "Currently Reading", "Read", "Dropped")
+KINDS = ("book", "manga")
 PRICE_TYPES = ("online", "in-store")
 MATCH_METHODS = ("isbn", "title_author")
 
@@ -33,6 +34,7 @@ CREATE TABLE IF NOT EXISTS books (
     genre         TEXT,
     status        TEXT NOT NULL DEFAULT 'To Read'
                   CHECK (status IN ('To Read', 'Currently Reading', 'Read', 'Dropped')),
+    kind          TEXT NOT NULL DEFAULT 'book' CHECK (kind IN ('book', 'manga')),
     date_added    TEXT NOT NULL,
     date_finished TEXT,                     -- set when status becomes Read/Dropped
     rating        INTEGER CHECK (rating IS NULL OR rating BETWEEN 1 AND 5),
@@ -85,7 +87,7 @@ CREATE TABLE IF NOT EXISTS fetch_log (
 """
 
 EDITABLE_BOOK_FIELDS = {
-    "title", "author", "isbn", "isbn10", "cover_url", "genre", "status",
+    "title", "author", "isbn", "isbn10", "cover_url", "genre", "status", "kind",
     "date_finished", "rating", "notes", "target_price",
 }
 
@@ -118,8 +120,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
     rebuilt (same columns, same ids; prices and links keep pointing at them).
     """
     sql = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'books'").fetchone()[0]
-    if "Currently Reading" in sql:
-        return
+    if "Currently Reading" not in sql:
+        _rebuild_books_for_new_status(conn, sql)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(books)")}
+    if "kind" not in columns:   # databases from before the Manga library existed
+        conn.execute("ALTER TABLE books ADD COLUMN kind TEXT NOT NULL DEFAULT 'book' "
+                     "CHECK (kind IN ('book', 'manga'))")
+        conn.commit()
+
+
+def _rebuild_books_for_new_status(conn: sqlite3.Connection, sql: str) -> None:
     conn.commit()
     conn.execute("PRAGMA foreign_keys = OFF")
     try:
@@ -151,6 +161,8 @@ def _validate_book_fields(fields: dict) -> dict:
     fields = {k: v for k, v in fields.items() if k in EDITABLE_BOOK_FIELDS}
     if "status" in fields and fields["status"] not in STATUSES:
         raise ValueError(f"status must be one of {STATUSES}")
+    if "kind" in fields and fields["kind"] not in KINDS:
+        raise ValueError(f"kind must be one of {KINDS}")
     if fields.get("rating") is not None:
         rating = int(fields["rating"])
         if not 1 <= rating <= 5:
@@ -174,14 +186,19 @@ def _validate_book_fields(fields: dict) -> dict:
 def add_book(conn: sqlite3.Connection, **fields: Any) -> int:
     """Insert a book and return its id.
 
-    If a book with the same ISBN already exists, nothing is inserted and the
-    existing id is returned (so adding twice never creates duplicates).
+    If a book with the same ISBN already exists (or, without an ISBN, the same
+    title and author in the same library), nothing is inserted and the existing
+    id is returned (so adding twice never creates duplicates).
     """
     if not fields.get("title"):
         raise ValueError("title is required")
     fields = _validate_book_fields(fields)
     if fields.get("isbn"):
         existing = get_book_by_isbn(conn, fields["isbn"])
+        if existing:
+            return existing["id"]
+    else:
+        existing = find_book(conn, fields.get("kind", "book"), fields["title"], fields.get("author"))
         if existing:
             return existing["id"]
     fields.setdefault("status", "To Read")
@@ -200,6 +217,14 @@ def get_book(conn: sqlite3.Connection, book_id: int) -> dict | None:
     return dict(row) if row else None
 
 
+def find_book(conn: sqlite3.Connection, kind: str, title: str, author: str | None = None) -> dict | None:
+    """A book of this kind with the same title and author (ignoring case), if any."""
+    row = conn.execute(
+        "SELECT * FROM books WHERE kind = ? AND lower(title) = lower(?) "
+        "AND lower(coalesce(author, '')) = lower(?)", (kind, title.strip(), (author or "").strip())).fetchone()
+    return dict(row) if row else None
+
+
 def get_book_by_isbn(conn: sqlite3.Connection, isbn: str) -> dict | None:
     isbn13 = isbn_utils.normalize(isbn)
     if not isbn13:
@@ -208,14 +233,22 @@ def get_book_by_isbn(conn: sqlite3.Connection, isbn: str) -> dict | None:
     return dict(row) if row else None
 
 
-def list_books(conn: sqlite3.Connection, status: str | None = None) -> list[dict]:
-    """All books (newest first), optionally only one status."""
+def list_books(conn: sqlite3.Connection, status: str | None = None,
+               kind: str | None = None) -> list[dict]:
+    """All books (newest first), optionally only one status and/or one kind (book/manga)."""
+    where, args = [], []
     if status:
         if status not in STATUSES:
             raise ValueError(f"status must be one of {STATUSES}")
-        return _rows(conn.execute(
-            "SELECT * FROM books WHERE status = ? ORDER BY date_added DESC, id DESC", (status,)))
-    return _rows(conn.execute("SELECT * FROM books ORDER BY date_added DESC, id DESC"))
+        where.append("status = ?")
+        args.append(status)
+    if kind:
+        if kind not in KINDS:
+            raise ValueError(f"kind must be one of {KINDS}")
+        where.append("kind = ?")
+        args.append(kind)
+    clause = f" WHERE {' AND '.join(where)}" if where else ""
+    return _rows(conn.execute(f"SELECT * FROM books{clause} ORDER BY date_added DESC, id DESC", args))
 
 
 def update_book(conn: sqlite3.Connection, book_id: int, **fields: Any) -> None:

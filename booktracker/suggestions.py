@@ -15,7 +15,7 @@ import logging
 import re
 from dataclasses import dataclass
 
-from . import book_search, config
+from . import book_search, config, manga_search
 from .book_search import BookResult
 
 log = logging.getLogger("booktracker.suggestions")
@@ -33,6 +33,12 @@ BORING_SUBJECTS = re.compile(
 class Suggestion:
     book: BookResult
     reason: str
+
+
+def similar_manga(book: dict, count: int = 5) -> list[Suggestion]:
+    """Other manga readers of this series liked, then more by the same creator."""
+    pairs = manga_search.similar_manga(book["title"], book.get("author"), count)
+    return [Suggestion(b, reason) for b, reason in pairs]
 
 
 def _norm_title(title: str) -> str:
@@ -156,7 +162,8 @@ def claude_available() -> bool:
     return bool(config.get_secret("ANTHROPIC_API_KEY"))
 
 
-def build_prompt(books: list[dict], count: int) -> str:
+def build_prompt(books: list[dict], count: int, kind: str = "book") -> str:
+    noun = "manga series" if kind == "manga" else "books"
     def line(b: dict) -> str:
         parts = [f"- {b['title']}"]
         if b.get("author"):
@@ -173,28 +180,28 @@ def build_prompt(books: list[dict], count: int) -> str:
     read.sort(key=lambda b: -(b.get("rating") or 0))
     dropped = [b for b in books if b["status"] == "Dropped"]
     to_read = [b for b in books if b["status"] == "To Read"]
-    sections = ["Books I have read (highest rated first):", *map(line, read)]
+    sections = [f"{noun.capitalize()} I have read (highest rated first):", *map(line, read)]
     if dropped:
-        sections += ["", "Books I started but dropped (I did not enjoy these):", *map(line, dropped)]
+        sections += ["", f"{noun.capitalize()} I started but dropped (I did not enjoy these):", *map(line, dropped)]
     if to_read:
         sections += ["", "Already on my to-read list (do not recommend these):",
                      *(f"- {b['title']}" for b in to_read)]
     sections += [
         "",
-        f"Recommend {count} books I have not read yet that I am likely to enjoy, based on what I "
-        "rated highly and what I dropped. Only real, published books with their correct author. "
+        f"Recommend {count} {noun} I have not read yet that I am likely to enjoy, based on what I "
+        "rated highly and what I dropped. Only real, published titles with their correct author. "
         "Do not recommend anything listed above. For each, give a one-sentence reason that "
         "refers to specific books from my list.",
     ]
     return "\n".join(sections)
 
 
-def claude_recommendations(books: list[dict], count: int = 5) -> list[Suggestion]:
+def claude_recommendations(books: list[dict], count: int = 5, kind: str = "book") -> list[Suggestion]:
     """Ask Claude for recommendations; each is then looked up for cover/ISBN."""
     import anthropic
 
     if not any(b["status"] == "Read" for b in books):
-        raise ValueError("Mark at least one book as Read (ideally with a rating) first.")
+        raise ValueError("Mark at least one as Read (ideally with a rating) first.")
     client = anthropic.Anthropic(api_key=config.get_secret("ANTHROPIC_API_KEY"))
     response = client.beta.messages.create(
         model=config.get_secret("CLAUDE_MODEL", "claude-opus-5-5"),
@@ -203,8 +210,9 @@ def claude_recommendations(books: list[dict], count: int = 5) -> list[Suggestion
         fallbacks="default",
         output_config={"effort": "medium",
                        "format": {"type": "json_schema", "schema": CLAUDE_SCHEMA}},
-        system="You are a well-read, honest book recommender.",
-        messages=[{"role": "user", "content": build_prompt(books, count)}],
+        system=("You are a knowledgeable, honest manga recommender." if kind == "manga"
+                else "You are a well-read, honest book recommender."),
+        messages=[{"role": "user", "content": build_prompt(books, count, kind)}],
     )
     if response.stop_reason == "refusal":
         raise RuntimeError("Claude declined this request; try again later.")
@@ -218,9 +226,14 @@ def claude_recommendations(books: list[dict], count: int = 5) -> list[Suggestion
             continue
         found = None
         try:
-            hits = book_search.search_openlibrary(f"{rec['title']}", 5)
+            if kind == "manga":
+                hits, _ = manga_search.search_manga(rec["title"], 3)
+                found = hits[0] if hits else None
+                hits = []
+            else:
+                hits = book_search.search_openlibrary(f"{rec['title']}", 5)
             author_first = rec["author"].split()[-1].lower() if rec["author"] else ""
-            found = next((h for h in hits if author_first in (h.author or "").lower()), None)
+            found = found or next((h for h in hits if author_first in (h.author or "").lower()), None)
         except Exception as exc:
             log.warning("could not look up %s: %s", rec["title"], exc)
         book = found or BookResult(title=rec["title"], author=rec["author"], source="Claude")

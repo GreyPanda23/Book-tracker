@@ -14,6 +14,12 @@ Dubai and online in the UAE. Prices are checked automatically every Sunday.
 
 ## What's in the app
 
+Use the **Library** switch at the top of the sidebar to flip between **📚 Books** and
+**🎌 Manga**. Every page below works the same way in both libraries and only shows the
+one you picked. Manga data comes from AniList (free, no key); manga are listed by
+series, so they have no ISBN. Weekly price checks for manga match by title; add the
+ISBN of a specific volume (Edit) to price that exact one.
+
 | Page | What you can do |
 |---|---|
 | 📚 **My Books** | Tabs for *To Read / Currently Reading / Read / Dropped*, change status anytime, star rating, notes, target price for alerts |

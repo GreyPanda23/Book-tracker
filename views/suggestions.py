@@ -1,16 +1,18 @@
-"""Similar-book suggestions (Open Library) and optional Claude recommendations."""
+"""Similar-book/manga suggestions and optional Claude recommendations."""
 
 import streamlit as st
 
 from booktracker import db, suggestions, ui
 
-st.title("💡 Suggestions")
+kind = ui.current_kind()
+words = ui.kind_words(kind)
+st.title(f"💡 {words['plural']} Suggestions")
 
 conn = ui.get_conn()
-books = db.list_books(conn)
+books = db.list_books(conn, kind=kind)
 conn.close()
 if not books:
-    st.info("Add some books first, then come back for suggestions.")
+    st.info(f"Add some {words['lower']} first, then come back for suggestions.")
     st.stop()
 
 owned_titles = {suggestions._norm_title(b["title"]) for b in books}
@@ -18,13 +20,14 @@ owned_isbns = {b["isbn"] for b in books if b["isbn"]}
 
 
 @st.cache_data(ttl=24 * 3600, show_spinner=False)
-def cached_similar(title: str, author: str | None, isbn: str | None):
-    return suggestions.similar_books({"title": title, "author": author, "isbn": isbn})
+def cached_similar(kind: str, title: str, author: str | None, isbn: str | None):
+    book = {"title": title, "author": author, "isbn": isbn}
+    return suggestions.similar_manga(book) if kind == "manga" else suggestions.similar_books(book)
 
 
 def show_suggestions(items: list[suggestions.Suggestion], key: str) -> None:
     if not items:
-        st.warning("No suggestions found for this one. Try another book.")
+        st.warning("No suggestions found for this one. Try another.")
     for i, s in enumerate(items):
         b = s.book
         with st.container(border=True):
@@ -39,26 +42,28 @@ def show_suggestions(items: list[suggestions.Suggestion], key: str) -> None:
                     st.caption("✔ Already in your list")
                 elif st.button("➕ Add to To Read", key=f"{key}_{i}"):
                     fields = b.to_db_fields()
-                    if ui.save(lambda c: db.add_book(c, status="To Read", **fields),
+                    if ui.save(lambda c: db.add_book(c, status="To Read", kind=kind, **fields),
                                f"Add suggestion: {b.title}"):
                         st.toast(f"Added “{b.title}” to To Read")
                         st.rerun()
 
 
-similar_tab, ai_tab = st.tabs(["📚 Similar to a book", "🤖 AI picks (Claude)"])
+similar_tab, ai_tab = st.tabs([f"{words['icon']} Similar to one you have", "🤖 AI picks (Claude)"])
+source = "AniList" if kind == "manga" else "Open Library"
 
 with similar_tab:
     choices = {f"{b['title']} — {b['author'] or '?'}": b for b in books}
     default = next((i for i, b in enumerate(books) if b["status"] == "Read"), 0)
-    label = st.selectbox("Find books similar to", list(choices), index=default)
+    label = st.selectbox(f"Find {words['lower']} similar to", list(choices), index=default,
+                         key=f"similar_choice_{kind}")
     chosen = choices[label]
-    with st.spinner("Looking for similar books on Open Library…"):
+    with st.spinner(f"Looking for similar {words['lower']} on {source}…"):
         try:
-            items = cached_similar(chosen["title"], chosen["author"], chosen["isbn"])
+            items = cached_similar(kind, chosen["title"], chosen["author"], chosen["isbn"])
         except Exception as exc:
             items = []
-            st.error(f"Open Library is not reachable right now ({exc}).")
-    show_suggestions(items, f"sim_{chosen['id']}")
+            st.error(f"{source} is not reachable right now ({exc}).")
+    show_suggestions(items, f"sim_{kind}_{chosen['id']}")
 
 with ai_tab:
     if not suggestions.claude_available():
@@ -68,13 +73,14 @@ with ai_tab:
             "See the README, section *Claude recommendations*.")
     else:
         read_count = sum(b["status"] == "Read" for b in books)
-        st.caption(f"Uses your {read_count} Read book(s), their ratings and notes, "
+        st.caption(f"Uses your {read_count} Read {words['lower']}, their ratings and notes, "
                    "and avoids anything you dropped or already plan to read.")
-        if st.button("Get recommendations", type="primary"):
+        if st.button("Get recommendations", type="primary", key=f"ai_btn_{kind}"):
             with st.spinner("Asking Claude…"):
                 try:
-                    st.session_state["ai_suggestions"] = suggestions.claude_recommendations(books)
+                    st.session_state[f"ai_suggestions_{kind}"] = suggestions.claude_recommendations(
+                        books, kind=kind)
                 except Exception as exc:
                     st.error(f"Couldn't get recommendations: {exc}")
-        if "ai_suggestions" in st.session_state:
-            show_suggestions(st.session_state["ai_suggestions"], "ai")
+        if f"ai_suggestions_{kind}" in st.session_state:
+            show_suggestions(st.session_state[f"ai_suggestions_{kind}"], f"ai_{kind}")

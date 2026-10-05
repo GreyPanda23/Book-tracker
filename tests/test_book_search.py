@@ -132,7 +132,7 @@ def test_filter_by_author_rating_and_owned():
              _rated("C", "Ann Lee, Bob Ray", "2010", None, 50, "3")]
     assert [b.title for b in bs.filter_and_sort(books, authors=["Ann Lee"])] == ["A", "C"]
     assert [b.title for b in bs.filter_and_sort(books, min_rating=4)] == ["A"]
-    assert [b.title for b in bs.filter_and_sort(books, hide_isbns={"2"})] == ["A", "C"]
+    assert [b.title for b in bs.filter_and_sort(books, hide_keys={"2"})] == ["A", "C"]
     assert [b.title for b in bs.filter_and_sort(books, sort="Most popular")] == ["B", "A", "C"]
     assert [b.title for b in bs.filter_and_sort(books, sort="Highest rated")] == ["A", "B", "C"]
     assert bs.author_counts(books) == [("Bob Ray", 2), ("Ann Lee", 2)] or \
@@ -175,7 +175,7 @@ def test_surprise_me_picks_liked_unowned_books(monkeypatch):
     books = [_rated(f"Good{i}", "A", "2000", 4.2, 100, str(i)) for i in range(8)]
     books += [_rated("Meh", "A", "2000", 2.0, 100, "90"), _rated("Rare", "A", "2000", 4.9, 2, "91")]
     monkeypatch.setattr(bs, "search_by_genres", lambda g, match_all=True, keyword="", limit=60: (books, "from test"))
-    picks, note = bs.surprise_me(["Fantasy"], owned_isbns={"0", "1"}, rng=random.Random(1))
+    picks, note = bs.surprise_me(["Fantasy"], owned={"0", "1"}, rng=random.Random(1))
     assert len(picks) == 5 and all(b.title.startswith("Good") for b in picks)
     assert not {b.isbn for b in picks} & {"0", "1"}
     assert "Fantasy" in note and "Surprise" in note

@@ -8,24 +8,25 @@ import streamlit as st
 
 from booktracker import db, ui
 
-st.title("📚 My Books")
+words = ui.kind_words()
+st.title(f"{words['icon']} {words['my']}")
 
 conn = ui.get_conn()
-books = db.list_books(conn)
+books = db.list_books(conn, kind=words["kind"])
 conn.close()
 
 if not books:
-    st.info("No books yet. Go to **➕ Add a Book** to search and add your first one.")
+    st.info(f"No {words['lower']} yet. Go to **➕ {words['add']}** to search and add your first one.")
     st.stop()
 
 def clear_search() -> None:
-    st.session_state["my_books_filter"] = ""
+    st.session_state[f"my_books_filter_{words['kind']}"] = ""
 
 
 box, clear = st.columns([6, 1], vertical_alignment="center")
-search = box.text_input("Filter", placeholder="Filter by title, author or genre",
-                        label_visibility="collapsed", key="my_books_filter")
-clear.button("✖ Clear", key="my_books_clear", disabled=not search, on_click=clear_search,
+search = box.text_input("Filter", placeholder=f"Filter {words['lower']} by title, author or genre",
+                        label_visibility="collapsed", key=f"my_books_filter_{words['kind']}")
+clear.button("✖ Clear", key=f"my_books_clear_{words['kind']}", disabled=not search, on_click=clear_search,
              help="Clear the search and go back to the section tabs")
 if search:
     s = search.lower()
@@ -79,9 +80,9 @@ def show(book_list: list[dict], tab_key: str) -> None:
 
 
 if search:
-    st.caption(f"{len(books)} matching book(s) across all sections")
+    st.caption(f"{len(books)} matching {words['lower']} across all sections")
     if not books:
-        st.info("No book in your list matches that.")
+        st.info(f"No {words['singular']} in your list matches that.")
     for status in db.STATUSES:
         if by_status[status]:
             st.subheader(f"{ui.STATUS_ICONS[status]} {status} ({len(by_status[status])})")

@@ -10,10 +10,32 @@ import streamlit as st
 
 from . import config, db, sync
 from .book_search import (BookResult, SORT_OPTIONS, author_counts, filter_and_sort,
-                          year_bounds)
+                          owned_keys, year_bounds)
 
 STATUS_ICONS = {"To Read": "📖", "Currently Reading": "📘", "Read": "✅", "Dropped": "🚫"}
 PLACEHOLDER_COVER = "https://placehold.co/128x192?text=No+cover"
+
+
+LIBRARIES = {"📚 Books": "book", "🎌 Manga": "manga"}
+
+
+def library_switch() -> None:
+    """The Books / Manga switch in the sidebar. Every page shows the chosen library."""
+    st.sidebar.radio("Library", list(LIBRARIES), key="library", horizontal=True)
+
+
+def current_kind() -> str:
+    """'book' or 'manga' - which library the switch is on (books if it hasn't been used)."""
+    return LIBRARIES.get(st.session_state.get("library"), "book")
+
+
+def kind_words(kind: str | None = None) -> dict[str, str]:
+    """Wording that changes between the libraries (page titles, search hints...)."""
+    if (kind or current_kind()) == "manga":
+        return {"kind": "manga", "icon": "🎌", "plural": "Manga", "lower": "manga", "singular": "manga",
+                "my": "My Manga", "add": "Add a Manga"}
+    return {"kind": "book", "icon": "📚", "plural": "Books", "lower": "books", "singular": "book",
+            "my": "My Books", "add": "Add a Book"}
 
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -124,7 +146,8 @@ def result_filters(results: list[BookResult], key: str) -> list[tuple[int, BookR
                                help="Books with no rating are hidden when this is above 0") \
             if has_ratings else 0.0
         keep_unknown = c4.checkbox("Include books with no year", value=True, key=f"{key}_unknown")
-        hide_owned = c5.checkbox("Hide books I already have", value=False, key=f"{key}_owned")
+        hide_owned = c5.checkbox(f"Hide {kind_words()['lower']} I already have", value=False,
+                                 key=f"{key}_owned")
         active = (bool(bounds) and tuple(years) != tuple(bounds)) or sort != SORT_OPTIONS[0] \
             or bool(picked) or min_rating > 0 or not keep_unknown or hide_owned
         st.button("✖ Clear all filters", key=f"{key}_clear", disabled=not active,
@@ -132,7 +155,7 @@ def result_filters(results: list[BookResult], key: str) -> list[tuple[int, BookR
     owned: set[str] = set()
     if hide_owned:
         conn = get_conn()
-        owned = {b["isbn"] for b in db.list_books(conn) if b["isbn"]}
+        owned = owned_keys(db.list_books(conn, kind=current_kind()))
         conn.close()
     kept = filter_and_sort(results, years[0], years[1], sort, keep_unknown, picked, min_rating, owned)
     position = {id(b): i for i, b in shown}
@@ -143,6 +166,7 @@ def result_filters(results: list[BookResult], key: str) -> list[tuple[int, BookR
 
 def result_cards(shown: list[tuple[int, BookResult]], key: str) -> None:
     """One card per search result with a status picker and an Add button."""
+    kind = current_kind()
     conn = get_conn()
     try:
         for i, book in shown:
@@ -155,8 +179,9 @@ def result_cards(shown: list[tuple[int, BookResult]], key: str) -> None:
                     rating = f"★ {book.rating:.1f}" if book.rating else None
                     st.caption(" · ".join(filter(None, [
                         book.author, book.year, book.genre, rating,
-                        f"ISBN {book.isbn}" if book.isbn else "no ISBN"])))
-                    existing = db.get_book_by_isbn(conn, book.isbn) if book.isbn else None
+                        (f"ISBN {book.isbn}" if book.isbn else "no ISBN") if kind == "book" else None])))
+                    existing = (db.get_book_by_isbn(conn, book.isbn) if book.isbn else None) \
+                        or db.find_book(conn, kind, book.title, book.author)
                     if existing:
                         st.info(f"Already in your list ({existing['status']}).")
                         continue
@@ -165,7 +190,7 @@ def result_cards(shown: list[tuple[int, BookResult]], key: str) -> None:
                                           label_visibility="collapsed")
                     if c2.button("Add", key=f"{key}_add_{i}", type="primary"):
                         fields = book.to_db_fields()
-                        if save(lambda c: db.add_book(c, status=status, **fields),
+                        if save(lambda c: db.add_book(c, status=status, kind=kind, **fields),
                                 f"Add book: {book.title}"):
                             st.toast(f"Added “{book.title}” to {status}")
                             st.rerun()

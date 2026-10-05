@@ -274,6 +274,29 @@ def year_bounds(books: list[BookResult]) -> tuple[int, int] | None:
     return (min(years), max(years)) if years else None
 
 
+def _title_key(title: str | None, author: str | None) -> str:
+    first_author = (author or "").split(",")[0]
+    return "t:" + " ".join(_words(title)) + "|" + " ".join(_words(first_author))
+
+
+def book_keys(book: BookResult) -> set[str]:
+    """Identifiers used to spot a book you already have: its ISBN and its title + author."""
+    keys = {_title_key(book.title, book.author)}
+    if book.isbn:
+        keys.add(book.isbn)
+    return keys
+
+
+def owned_keys(rows: list[dict]) -> set[str]:
+    """`book_keys` for every saved book (database rows)."""
+    keys: set[str] = set()
+    for r in rows:
+        keys.add(_title_key(r["title"], r.get("author")))
+        if r.get("isbn"):
+            keys.add(r["isbn"])
+    return keys
+
+
 def authors_of(book: BookResult) -> list[str]:
     return [a.strip() for a in (book.author or "").split(",") if a.strip()]
 
@@ -301,14 +324,14 @@ def _weighted_rating(book: BookResult, typical: float = 3.7, weight: int = 50) -
 def filter_and_sort(books: list[BookResult], first_year: int | None = None,
                     last_year: int | None = None, sort: str = "Best match",
                     keep_unknown_year: bool = True, authors: list[str] | None = None,
-                    min_rating: float = 0, hide_isbns: set[str] | None = None) -> list[BookResult]:
+                    min_rating: float = 0, hide_keys: set[str] | None = None) -> list[BookResult]:
     """Keep the books that pass every filter and put them in the chosen order.
 
     - years: inclusive range; books with no known year are kept unless
       `keep_unknown_year` is False (and are listed last when sorting by date)
     - authors: keep books by any of these authors (empty/None = everyone)
     - min_rating: drop books rated below this (books with no rating are dropped too)
-    - hide_isbns: drop books whose ISBN is in this set (e.g. already in your list)
+    - hide_keys: drop books whose ISBN or title+author key is in this set (see `owned_keys`)
     """
     chosen = set(authors or [])
     out = []
@@ -323,7 +346,7 @@ def filter_and_sort(books: list[BookResult], first_year: int | None = None,
             continue
         if min_rating and (b.rating or 0) < min_rating:
             continue
-        if hide_isbns and b.isbn in hide_isbns:
+        if hide_keys and book_keys(b) & hide_keys:
             continue
         out.append(b)
 
@@ -405,24 +428,29 @@ def search_by_genres(genres: list[str], match_all: bool = True, keyword: str = "
     return [], "No books found. " + "; ".join(problems)
 
 
-def surprise_me(genres: list[str] | None = None, owned_isbns: set[str] | None = None,
+def pick_surprises(results: list[BookResult], owned: set[str], count: int = 5,
+                   rng: random.Random | None = None) -> list[BookResult]:
+    """Random picks from `results`: not owned, preferably rated 3.5+ by 20+ readers."""
+    rng = rng or random.Random()
+    fresh = [b for b in results if not book_keys(b) & owned]
+    liked = [b for b in fresh if (b.rating or 0) >= 3.5 and (b.popularity or 0) >= 20]
+    pool = liked if len(liked) >= count else fresh
+    return rng.sample(pool, min(count, len(pool))) if pool else []
+
+
+def surprise_me(genres: list[str] | None = None, owned: set[str] | None = None,
                 count: int = 5, rng: random.Random | None = None) -> tuple[list[BookResult], str]:
     """A few random, well-liked books you don't have yet.
 
     Uses the genres you picked (any of them); with none picked, one random genre.
-    Prefers books with a decent rating from enough readers, and falls back to
-    anything found if too few qualify.
+    `owned` is a set of keys from `owned_keys`.
     """
     rng = rng or random.Random()
-    owned = owned_isbns or set()
     picked = [g for g in (genres or []) if g] or [rng.choice(GENRE_NAMES)]
     results, note = search_by_genres(picked, match_all=False)
-    fresh = [b for b in results if not (b.isbn and b.isbn in owned)]
-    liked = [b for b in fresh if (b.rating or 0) >= 3.5 and (b.popularity or 0) >= 20]
-    pool = liked if len(liked) >= count else fresh
-    if not pool:
+    chosen = pick_surprises(results, owned or set(), count, rng)
+    if not chosen:
         return [], note
-    chosen = rng.sample(pool, min(count, len(pool)))
     return chosen, f"🎲 Surprise! {len(chosen)} random picks from {', '.join(picked)}. {note}"
 
 

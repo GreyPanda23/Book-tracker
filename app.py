@@ -9,6 +9,8 @@ st.set_page_config(page_title="My Book Tracker", page_icon="📚", layout="wide"
 if not ui.check_password():
     st.stop()
 
+ui.library_switch()
+
 pages = [
     st.Page("views/my_books.py", title="My Books", icon="📚", default=True),
     st.Page("views/add_book.py", title="Add a Book", icon="➕"),

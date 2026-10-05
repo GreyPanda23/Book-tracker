@@ -6,19 +6,20 @@ import streamlit as st
 from booktracker import charts, db, ui
 from booktracker.fetchers.registry import load_store_configs
 
-st.title("💰 Prices")
+words = ui.kind_words()
+st.title(f"💰 {words['plural']} Prices")
 
 conn = ui.get_conn()
-books = db.list_books(conn)
+books = db.list_books(conn, kind=words["kind"])
 if not books:
     conn.close()
-    st.info("Add books to your To Read list first. Prices are checked every Sunday.")
+    st.info(f"Add {words['lower']} to your To Read list first. Prices are checked every Sunday.")
     st.stop()
 
 # To Read books first - they're the ones prices are checked for
 books.sort(key=lambda b: (b["status"] != "To Read", b["title"].lower()))
 labels = {f"{ui.STATUS_ICONS[b['status']]} {b['title']} — {b['author'] or '?'}": b for b in books}
-book = labels[st.selectbox("Book", list(labels))]
+book = labels[st.selectbox(words["singular"].title(), list(labels))]
 
 latest = db.latest_prices(conn, book["id"])
 history = db.price_history(conn, book["id"])
@@ -35,7 +36,11 @@ with right:
     st.caption(" · ".join(filter(None, [f"ISBN {book['isbn']}" if book["isbn"] else "No ISBN",
                                         f"🎯 target AED {book['target_price']:.0f}" if book["target_price"] else None])))
     if book["status"] != "To Read":
-        st.caption("ℹ️ Prices are only checked for books marked **To Read**.")
+        st.caption(f"ℹ️ Prices are only checked for {words['lower']} marked **To Read**.")
+    if words["kind"] == "manga" and not book["isbn"]:
+        st.caption("ℹ️ Manga are listed by series, so prices come from matching the title and may be "
+                   "for a different volume. Edit the manga and add the ISBN of a specific volume "
+                   "(e.g. volume 1) to price that exact one.")
 
 priced = [p for p in latest if p["price_aed"] is not None]
 if not priced:
