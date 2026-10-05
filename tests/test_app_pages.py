@@ -52,6 +52,22 @@ def test_search_and_add(temp_db, monkeypatch):
     assert [(b["title"], b["status"], b["genre"]) for b in books] == [("Dune", "To Read", "Science Fiction")]
 
 
+def test_author_results_can_be_filtered_by_year(temp_db, monkeypatch):
+    fake = [BookResult(title=t, author="Christopher Paolini", year=y, source="test")
+            for t, y in (("Eragon", "2002"), ("Eldest", "2005"), ("Murtagh", "2023"))]
+    monkeypatch.setattr(book_search, "search_books", lambda q, limit=10: (fake, "Results from test"))
+    at = run("views/add_book.py")
+    at.text_input[0].input("Christopher Paolini")
+    at.button[0].click().run()
+    assert not at.exception
+    assert len([b for b in at.button if b.label == "Add"]) == 3
+    at.slider[0].set_value((2004, 2023)).run()
+    assert len([b for b in at.button if b.label == "Add"]) == 2
+    at.selectbox[0].set_value("Oldest first").run()
+    assert not at.exception
+    assert [m.value for m in at.markdown if m.value.startswith("**")][:2] == ["**Eldest**", "**Murtagh**"]
+
+
 def test_tabs_and_edit(temp_db):
     conn = db.connect(temp_db)
     a = db.add_book(conn, title="Dune", isbn="9780441172719")

@@ -3,7 +3,8 @@
 import streamlit as st
 
 from booktracker import db, ui
-from booktracker.book_search import BookResult, search_books
+from booktracker.book_search import (BookResult, SORT_OPTIONS, filter_and_sort, search_books,
+                                     year_bounds)
 
 st.title("➕ Add a Book")
 
@@ -15,13 +16,30 @@ if submitted:
         results, note = search_books(query)
     st.session_state["search_results"] = results
     st.session_state["search_note"] = note
+    st.session_state["search_id"] = st.session_state.get("search_id", 0) + 1  # resets the filters
 
 results: list[BookResult] = st.session_state.get("search_results", [])
 if "search_note" in st.session_state:
     st.caption(st.session_state["search_note"])
 
+# Filters: release year range and sort order (only useful with a few results)
+shown = list(enumerate(results))
+bounds = year_bounds(results)
+if len(results) > 1 and bounds:
+    fid = st.session_state.get("search_id", 0)
+    c1, c2 = st.columns([3, 2])
+    first, last = bounds
+    years = c1.slider("Released between", first, last, (first, last), key=f"years_{fid}") \
+        if first < last else (first, last)
+    sort = c2.selectbox("Sort by", SORT_OPTIONS, key=f"sort_{fid}")
+    keep_unknown = st.checkbox("Include books with no release year", value=True, key=f"unk_{fid}")
+    kept = filter_and_sort([b for _, b in shown], years[0], years[1], sort, keep_unknown)
+    order = {id(b): i for i, b in shown}   # keep each book's widget keys stable
+    shown = [(order[id(b)], b) for b in kept]
+    st.caption(f"Showing {len(shown)} of {len(results)} books")
+
 conn = ui.get_conn()
-for i, book in enumerate(results):
+for i, book in shown:
     with st.container(border=True):
         left, right = st.columns([1, 4])
         with left:

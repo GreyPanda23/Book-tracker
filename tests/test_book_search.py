@@ -106,3 +106,18 @@ def test_author_search_failure_falls_back_to_title_results():
     import pytest
     with pytest.raises(RuntimeError):
         bs._title_and_author("origin", 10, boom, boom)
+
+
+def _yr(title, year):
+    return bs.BookResult(title=title, year=year)
+
+
+def test_year_filter_and_sort():
+    books = [_yr("B", "2010"), _yr("A", "2003"), _yr("C", "2020"), _yr("Nodate", None)]
+    assert bs.year_bounds(books) == (2003, 2020)
+    out = bs.filter_and_sort(books, 2005, 2020, "Newest first")
+    assert [b.title for b in out] == ["C", "B", "Nodate"]
+    out = bs.filter_and_sort(books, 2000, 2020, "Oldest first", keep_unknown_year=False)
+    assert [b.title for b in out] == ["A", "B", "C"]
+    assert [b.title for b in bs.filter_and_sort(books)] == ["B", "A", "C", "Nodate"]  # unchanged order
+    assert bs.year_bounds([_yr("x", None)]) is None

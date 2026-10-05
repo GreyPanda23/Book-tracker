@@ -251,6 +251,45 @@ def _title_and_author(query: str, limit: int,
 
 
 # --------------------------------------------------------------------------- #
+# Filtering and sorting results by release year
+# --------------------------------------------------------------------------- #
+SORT_OPTIONS = ("Best match", "Newest first", "Oldest first")
+
+
+def year_of(book: BookResult) -> int | None:
+    return int(book.year) if book.year and book.year.isdigit() else None
+
+
+def year_bounds(books: list[BookResult]) -> tuple[int, int] | None:
+    """(earliest, latest) release year in the results; None if no book has one."""
+    years = [y for y in map(year_of, books) if y]
+    return (min(years), max(years)) if years else None
+
+
+def filter_and_sort(books: list[BookResult], first_year: int | None = None,
+                    last_year: int | None = None, sort: str = "Best match",
+                    keep_unknown_year: bool = True) -> list[BookResult]:
+    """Keep books released between the two years (inclusive) and order them.
+
+    Books with no known year are kept (shown last when sorting by date) unless
+    `keep_unknown_year` is False.
+    """
+    out = []
+    for b in books:
+        y = year_of(b)
+        if y is None:
+            if keep_unknown_year:
+                out.append(b)
+        elif (first_year is None or y >= first_year) and (last_year is None or y <= last_year):
+            out.append(b)
+    if sort in ("Newest first", "Oldest first"):
+        newest = sort == "Newest first"
+        known = sorted((b for b in out if year_of(b)), key=year_of, reverse=newest)
+        out = known + [b for b in out if not year_of(b)]
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # Public entry point
 # --------------------------------------------------------------------------- #
 def search_books(query: str, limit: int = 10) -> tuple[list[BookResult], str]:
