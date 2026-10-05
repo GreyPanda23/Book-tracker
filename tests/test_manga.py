@@ -169,7 +169,7 @@ def test_search_and_add_manga(temp_db, monkeypatch):
     fake = [ms.parse_media(BERSERK)]
     monkeypatch.setattr(ms, "search_manga", lambda q, limit=10: (fake, "Results from AniList"))
     at = run("views/add_book.py", "🎌 Manga")
-    assert at.title[0].value.endswith("Add a Manga")
+    assert at.title[0].value.endswith("Add Manga")
     at.text_input[0].input("Berserk")
     at.button[0].click().run()
     assert not at.exception
@@ -215,3 +215,9 @@ def test_manga_stats_prices_and_suggestions_pages(temp_db, monkeypatch):
     conn = db.connect(temp_db)
     assert [b["title"] for b in db.list_books(conn, kind="manga")] == ["Vinland Saga", "Berserk"]
     assert [b["title"] for b in db.list_books(conn, kind="book")] == ["Dune"]
+
+
+def test_sidebar_names_follow_the_library():
+    from booktracker import ui
+    assert (ui.kind_words("book")["my"], ui.kind_words("book")["add"]) == ("My Books", "Add a Book")
+    assert (ui.kind_words("manga")["my"], ui.kind_words("manga")["add"]) == ("My Manga", "Add Manga")

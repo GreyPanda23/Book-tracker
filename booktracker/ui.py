@@ -33,7 +33,7 @@ def kind_words(kind: str | None = None) -> dict[str, str]:
     """Wording that changes between the libraries (page titles, search hints...)."""
     if (kind or current_kind()) == "manga":
         return {"kind": "manga", "icon": "🎌", "plural": "Manga", "lower": "manga", "singular": "manga",
-                "my": "My Manga", "add": "Add a Manga"}
+                "my": "My Manga", "add": "Add Manga"}
     return {"kind": "book", "icon": "📚", "plural": "Books", "lower": "books", "singular": "book",
             "my": "My Books", "add": "Add a Book"}
 
