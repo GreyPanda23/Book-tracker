@@ -147,6 +147,10 @@ def test_my_books_search_shows_matches_from_every_section(temp_db):
     assert "3 matching" in at.caption[0].value
     at.text_input[0].input("zzz").run()
     assert at.info and "No book" in at.info[0].value
+    at.button[0].click().run()                         # ✖ Clear
+    assert not at.exception
+    assert at.text_input[0].value == "" and len(at.tabs) == 5
+    assert at.button[0].disabled                       # nothing left to clear
 
 
 def test_tabs_and_edit(temp_db):
@@ -161,7 +165,7 @@ def test_tabs_and_edit(temp_db):
     # Edit Dune (first tab): set Read, 4 stars, notes
     at.selectbox[0].set_value("Read")
     at.text_area[0].input("Loved it")
-    at.button[0].click().run()   # "Save changes" of the first form
+    [b for b in at.button if b.label == "Save changes"][0].click().run()   # first form
     assert not at.exception
     conn = db.connect(temp_db)
     book = db.get_book(conn, a)

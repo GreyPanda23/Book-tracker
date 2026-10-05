@@ -18,8 +18,15 @@ if not books:
     st.info("No books yet. Go to **➕ Add a Book** to search and add your first one.")
     st.stop()
 
-search = st.text_input("Filter", placeholder="Filter by title, author or genre",
-                       label_visibility="collapsed")
+def clear_search() -> None:
+    st.session_state["my_books_filter"] = ""
+
+
+box, clear = st.columns([6, 1], vertical_alignment="center")
+search = box.text_input("Filter", placeholder="Filter by title, author or genre",
+                        label_visibility="collapsed", key="my_books_filter")
+clear.button("✖ Clear", key="my_books_clear", disabled=not search, on_click=clear_search,
+             help="Clear the search and go back to the section tabs")
 if search:
     s = search.lower()
     books = [b for b in books if s in " ".join(
