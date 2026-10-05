@@ -102,6 +102,31 @@ def test_surprise_me_button(temp_db, monkeypatch):
     assert [m.value for m in at.markdown if m.value.startswith("**")] == ["**Mistborn**"]
 
 
+def test_clear_all_filters(temp_db, monkeypatch):
+    fake = [BookResult(title=t, author=a, year=y, rating=r, source="test")
+            for t, a, y, r in (("Eragon", "Christopher Paolini", "2002", 3.9),
+                               ("Eldest", "Christopher Paolini", "2005", 4.0),
+                               ("Murtagh", "Christopher Paolini", "2023", 4.1),
+                               ("Other", "Someone Else", "1999", 2.0))]
+    monkeypatch.setattr(book_search, "search_books", lambda q, limit=10: (fake, "Results from test"))
+    at = run("views/add_book.py")
+    at.text_input[0].input("Paolini")
+    at.button[0].click().run()
+    clear = lambda: [b for b in at.button if "Clear all filters" in b.label][0]
+    adds = lambda: len([b for b in at.button if b.label == "Add"])
+    assert adds() == 4 and clear().disabled          # nothing to clear yet
+    at.slider[0].set_value((2004, 2023)).run()
+    at.multiselect[0].set_value(["Christopher Paolini"]).run()
+    at.selectbox[0].set_value("Newest first").run()
+    at.checkbox[1].set_value(True).run()             # hide books I already have
+    assert adds() == 2 and not clear().disabled
+    clear().click().run()
+    assert not at.exception
+    assert adds() == 4 and clear().disabled
+    assert at.selectbox[0].value == "Best match" and at.multiselect[0].value == []
+    assert at.slider[0].value == (1999, 2023)
+
+
 def test_tabs_and_edit(temp_db):
     conn = db.connect(temp_db)
     a = db.add_book(conn, title="Dune", isbn="9780441172719")

@@ -84,6 +84,15 @@ def stars(rating: int | None) -> str:
     return "★" * rating + "☆" * (5 - rating) if rating else ""
 
 
+_FILTER_WIDGETS = ("years", "sort", "authors", "rating", "unknown", "owned")
+
+
+def _clear_filters(key: str) -> None:
+    """Put every filter control of one results list back to its starting value."""
+    for name in _FILTER_WIDGETS:
+        st.session_state.pop(f"{key}_{name}", None)
+
+
 def result_filters(results: list[BookResult], key: str) -> list[tuple[int, BookResult]]:
     """Filter/sort controls for a list of search results.
 
@@ -116,6 +125,10 @@ def result_filters(results: list[BookResult], key: str) -> list[tuple[int, BookR
             if has_ratings else 0.0
         keep_unknown = c4.checkbox("Include books with no year", value=True, key=f"{key}_unknown")
         hide_owned = c5.checkbox("Hide books I already have", value=False, key=f"{key}_owned")
+        active = (bool(bounds) and tuple(years) != tuple(bounds)) or sort != SORT_OPTIONS[0] \
+            or bool(picked) or min_rating > 0 or not keep_unknown or hide_owned
+        st.button("✖ Clear all filters", key=f"{key}_clear", disabled=not active,
+                  on_click=_clear_filters, args=(key,))
     owned: set[str] = set()
     if hide_owned:
         conn = get_conn()
