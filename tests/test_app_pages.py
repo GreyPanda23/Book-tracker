@@ -127,6 +127,28 @@ def test_clear_all_filters(temp_db, monkeypatch):
     assert at.slider[0].value == (1999, 2023)
 
 
+def test_my_books_search_shows_matches_from_every_section(temp_db):
+    conn = db.connect(temp_db)
+    db.add_book(conn, title="Eragon", author="Christopher Paolini", isbn="9780375826689", status="Read")
+    db.add_book(conn, title="Murtagh", author="Christopher Paolini", isbn="9780593118276",
+                status="Currently Reading")
+    db.add_book(conn, title="Fractal Noise", author="Christopher Paolini", isbn="9781250889867")
+    db.add_book(conn, title="Dune", author="Frank Herbert", isbn="9780441172719")
+    conn.close()
+    at = run("views/my_books.py")
+    assert len(at.tabs) == 5                           # no search: the usual tabs
+    at.text_input[0].input("paolini").run()
+    assert not at.exception
+    assert len(at.tabs) == 0                           # one combined list instead
+    titles = [m.value for m in at.markdown if m.value.startswith("**")]
+    assert sorted(t.split("**")[1] for t in titles) == ["Eragon", "Fractal Noise", "Murtagh"]
+    headings = [h.value for h in at.subheader]
+    assert [h.split(" ", 1)[1] for h in headings] == ["To Read (1)", "Currently Reading (1)", "Read (1)"]
+    assert "3 matching" in at.caption[0].value
+    at.text_input[0].input("zzz").run()
+    assert at.info and "No book" in at.info[0].value
+
+
 def test_tabs_and_edit(temp_db):
     conn = db.connect(temp_db)
     a = db.add_book(conn, title="Dune", isbn="9780441172719")

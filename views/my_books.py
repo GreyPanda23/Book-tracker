@@ -1,4 +1,8 @@
-"""Your books, filtered by status tabs, with status/rating/notes editing."""
+"""Your books, filtered by status tabs, with status/rating/notes editing.
+
+While you type in the filter box the tabs give way to one list that groups the
+matches by status, so a search shows every match from every section at once.
+"""
 
 import streamlit as st
 
@@ -22,8 +26,6 @@ if search:
         str(b[k] or "") for k in ("title", "author", "genre")).lower()]
 
 by_status = {s: [b for b in books if b["status"] == s] for s in db.STATUSES}
-tabs = st.tabs([f"{ui.STATUS_ICONS[s]} {s} ({len(by_status[s])})" for s in db.STATUSES]
-               + [f"All ({len(books)})"])
 
 
 def edit_form(book: dict, key: str) -> None:
@@ -69,6 +71,17 @@ def show(book_list: list[dict], tab_key: str) -> None:
                     edit_form(book, f"{tab_key}_{book['id']}")
 
 
-for tab, status in zip(tabs, [*db.STATUSES, None]):
-    with tab:
-        show(by_status[status] if status else books, status or "all")
+if search:
+    st.caption(f"{len(books)} matching book(s) across all sections")
+    if not books:
+        st.info("No book in your list matches that.")
+    for status in db.STATUSES:
+        if by_status[status]:
+            st.subheader(f"{ui.STATUS_ICONS[status]} {status} ({len(by_status[status])})")
+            show(by_status[status], status)
+else:
+    tabs = st.tabs([f"{ui.STATUS_ICONS[s]} {s} ({len(by_status[s])})" for s in db.STATUSES]
+                   + [f"All ({len(books)})"])
+    for tab, status in zip(tabs, [*db.STATUSES, None]):
+        with tab:
+            show(by_status[status] if status else books, status or "all")
