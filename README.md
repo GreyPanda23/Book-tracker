@@ -16,8 +16,8 @@ Dubai and online in the UAE. Prices are checked automatically every Sunday.
 
 | Page | What you can do |
 |---|---|
-| 📚 **My Books** | Tabs for *To Read / Read / Dropped*, change status anytime, star rating, notes, target price for alerts |
-| ➕ **Add a Book** | Search by title or ISBN (Google Books, falls back to Open Library). Title, author, ISBN, cover and genre fill in automatically |
+| 📚 **My Books** | Tabs for *To Read / Currently Reading / Read / Dropped*, change status anytime, star rating, notes, target price for alerts |
+| ➕ **Add a Book** | Search by title, **author name** (lists their books) or ISBN (Google Books, falls back to Open Library). Title, author, ISBN, cover and genre fill in automatically |
 | 💡 **Suggestions** | 5 similar books for any book (same author + same subjects). Optional AI picks from Claude based on your ratings. One-click **Add to To Read** |
 | 💰 **Prices** | For each book: **In-Store (Dubai)** and **Online** tables, cheapest highlighted, price-history chart, store health |
 | 📊 **Stats** | Books read this year, drop rate, average rating, books per month, top genres |

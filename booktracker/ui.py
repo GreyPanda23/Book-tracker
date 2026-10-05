@@ -10,7 +10,7 @@ import streamlit as st
 
 from . import config, db, sync
 
-STATUS_ICONS = {"To Read": "📖", "Read": "✅", "Dropped": "🚫"}
+STATUS_ICONS = {"To Read": "📖", "Currently Reading": "📘", "Read": "✅", "Dropped": "🚫"}
 PLACEHOLDER_COVER = "https://placehold.co/128x192?text=No+cover"
 
 

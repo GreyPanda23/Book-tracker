@@ -70,3 +70,39 @@ def test_to_db_fields_only_has_columns():
 def test_live_openlibrary():
     results = bs.search_openlibrary("Dune Frank Herbert", 3)
     assert results and results[0].title
+
+
+def _book(title, author, isbn=None):
+    return bs.BookResult(title=title, author=author, isbn=isbn)
+
+
+def test_author_name_lists_their_books_first():
+    paolini = [_book("Eragon", "Christopher Paolini", "9780375826689"),
+               _book("Eldest", "Christopher Paolini"),
+               _book("Eragon", "Christopher Paolini", "9780375826689")]   # duplicate edition
+    other = [_book("Christopher and His Kind", "Christopher Isherwood")]
+    out = bs._title_and_author("christopher paolini", 10, lambda n: other, lambda n: paolini + other)
+    assert [b.title for b in out] == ["Eragon", "Eldest", "Christopher and His Kind"]
+
+
+def test_author_search_ignores_accents_and_case():
+    books = [_book("Cien años de soledad", "Gabriel García Márquez")]
+    out = bs._title_and_author("GARCIA MARQUEZ", 10, lambda n: [], lambda n: books)
+    assert len(out) == 1
+
+
+def test_title_query_stays_a_title_search():
+    titles = [_book("Origin", "Dan Brown")]
+    authors = [_book("Something Else", "Origin Smith Jr")]   # author field has the word, query has more
+    out = bs._title_and_author("origin of species", 10, lambda n: titles, lambda n: authors)
+    assert out == titles
+
+
+def test_author_search_failure_falls_back_to_title_results():
+    def boom(n):
+        raise RuntimeError("down")
+    titles = [_book("Origin", "Dan Brown")]
+    assert bs._title_and_author("origin", 10, lambda n: titles, boom) == titles
+    import pytest
+    with pytest.raises(RuntimeError):
+        bs._title_and_author("origin", 10, boom, boom)

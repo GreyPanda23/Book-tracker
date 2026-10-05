@@ -161,3 +161,33 @@ def test_runs_and_logs(conn):
     health = {h["store_name"]: h for h in db.store_health(conn)}
     assert health["Magrudy's"]["last_success"]
     assert health["Noon"]["last_problem"].startswith("blocked")
+
+
+def test_currently_reading_status(conn):
+    book_id = db.add_book(conn, title="Dune", status="Currently Reading")
+    book = db.get_book(conn, book_id)
+    assert book["status"] == "Currently Reading" and book["date_finished"] is None
+    db.set_status(conn, book_id, "Read")
+    assert db.get_book(conn, book_id)["date_finished"]
+    db.set_status(conn, book_id, "Currently Reading")
+    assert db.get_book(conn, book_id)["date_finished"] is None
+
+
+def test_old_database_is_upgraded(tmp_path):
+    import sqlite3
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.executescript(db.SCHEMA.replace("'To Read', 'Currently Reading', 'Read', 'Dropped'",
+                                        "'To Read', 'Read', 'Dropped'"))
+    old.execute("INSERT INTO books (title, isbn, date_added) VALUES ('Origin', '9780385514231', 'x')")
+    old.execute("INSERT INTO prices (book_id, store_name, type, date_checked) "
+                "VALUES (1, 'Magrudys', 'online', 'x')")
+    old.commit()
+    old.close()
+    conn = db.connect(path)
+    db.set_status(conn, 1, "Currently Reading")
+    assert db.get_book(conn, 1)["title"] == "Origin"
+    assert len(db.latest_prices(conn, 1)) == 1
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    conn.close()
+    db.connect(path).close()  # second open is a no-op

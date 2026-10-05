@@ -32,6 +32,15 @@ launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$TARGET"
 launchctl enable "gui/$(id -u)/$LABEL"
 
+# Second job: keep the local database in step with GitHub every 15 minutes.
+SYNC_LABEL="com.booktracker.sync"
+SYNC_TARGET="$HOME/Library/LaunchAgents/$SYNC_LABEL.plist"
+sed -e "s|__PROJECT__|$PROJECT|g" -e "s|__PYTHON__|$PYTHON|g" \
+    "$PROJECT/scheduler/macos/$SYNC_LABEL.plist" > "$SYNC_TARGET"
+launchctl bootout "gui/$(id -u)/$SYNC_LABEL" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" "$SYNC_TARGET"
+launchctl enable "gui/$(id -u)/$SYNC_LABEL"
+
 echo "✅ Installed. Prices will update every Sunday at 09:00 (or at the next login/wake if missed)."
 echo "   Logs:        $PROJECT/logs/update_prices.log"
 echo "   Run it now:  launchctl kickstart -k gui/$(id -u)/$LABEL"

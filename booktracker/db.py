@@ -18,7 +18,7 @@ from typing import Any, Iterable
 
 from . import config, isbn as isbn_utils
 
-STATUSES = ("To Read", "Read", "Dropped")
+STATUSES = ("To Read", "Currently Reading", "Read", "Dropped")
 PRICE_TYPES = ("online", "in-store")
 MATCH_METHODS = ("isbn", "title_author")
 
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS books (
     cover_url     TEXT,
     genre         TEXT,
     status        TEXT NOT NULL DEFAULT 'To Read'
-                  CHECK (status IN ('To Read', 'Read', 'Dropped')),
+                  CHECK (status IN ('To Read', 'Currently Reading', 'Read', 'Dropped')),
     date_added    TEXT NOT NULL,
     date_finished TEXT,                     -- set when status becomes Read/Dropped
     rating        INTEGER CHECK (rating IS NULL OR rating BETWEEN 1 AND 5),
@@ -107,7 +107,37 @@ def connect(path: str | Path | None = None) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Upgrade databases created before 'Currently Reading' existed.
+
+    SQLite can't change a CHECK constraint in place, so the books table is
+    rebuilt (same columns, same ids; prices and links keep pointing at them).
+    """
+    sql = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'books'").fetchone()[0]
+    if "Currently Reading" in sql:
+        return
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        new_sql = sql.replace("CHECK (status IN ('To Read', 'Read', 'Dropped'))",
+                              "CHECK (status IN ('To Read', 'Currently Reading', 'Read', 'Dropped'))")
+        new_sql = new_sql.replace("CREATE TABLE books", "CREATE TABLE books_new", 1)
+        new_sql = new_sql.replace('CREATE TABLE "books"', "CREATE TABLE books_new", 1)
+        conn.execute("BEGIN")
+        conn.execute(new_sql)
+        conn.execute("INSERT INTO books_new SELECT * FROM books")
+        conn.execute("DROP TABLE books")
+        conn.execute("ALTER TABLE books_new RENAME TO books")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
 
 
 def _rows(cursor: sqlite3.Cursor) -> list[dict]:

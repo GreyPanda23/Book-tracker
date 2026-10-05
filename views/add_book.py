@@ -8,7 +8,7 @@ from booktracker.book_search import BookResult, search_books
 st.title("➕ Add a Book")
 
 with st.form("search"):
-    query = st.text_input("Book title or ISBN", placeholder="e.g. Project Hail Mary")
+    query = st.text_input("Book title, author or ISBN", placeholder="e.g. Project Hail Mary or Andy Weir")
     submitted = st.form_submit_button("Search", type="primary")
 if submitted:
     with st.spinner("Searching…"):

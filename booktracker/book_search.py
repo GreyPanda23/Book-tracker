@@ -8,7 +8,10 @@ app keeps working without any key.
 from __future__ import annotations
 
 import logging
+import re
+import unicodedata
 from dataclasses import asdict, dataclass, field
+from typing import Callable
 
 import httpx
 
@@ -17,6 +20,7 @@ from . import config, isbn as isbn_utils
 log = logging.getLogger("booktracker.search")
 USER_AGENT = "PersonalBookTracker/1.0 (personal, non-commercial)"
 TIMEOUT = 15
+AUTHOR_LIMIT = 30   # how many books to list when the query is an author's name
 
 # Canonical genres, checked in order; the first keyword found in the
 # categories/subjects wins. More specific genres come before broad ones.
@@ -113,16 +117,24 @@ def _parse_google(item: dict) -> BookResult | None:
     )
 
 
-def search_google(query: str, limit: int = 10) -> list[BookResult]:
-    isbn13 = isbn_utils.normalize(query)
-    params = {"q": f"isbn:{isbn13}" if isbn13 else f"intitle:{query}",
-              "maxResults": min(limit, 40), "printType": "books"}
+def _google(q: str, limit: int) -> list[BookResult]:
+    params = {"q": q, "maxResults": min(limit, 40), "printType": "books"}
     key = config.get_secret("GOOGLE_BOOKS_API_KEY")
     if key:
         params["key"] = key
     data = _get("https://www.googleapis.com/books/v1/volumes", params)
     results = [_parse_google(item) for item in data.get("items", [])]
-    return [r for r in results if r][:limit]
+    return [r for r in results if r]
+
+
+def search_google(query: str, limit: int = 10) -> list[BookResult]:
+    isbn13 = isbn_utils.normalize(query)
+    if isbn13:
+        return _google(f"isbn:{isbn13}", limit)[:limit]
+    return _title_and_author(
+        query, limit,
+        lambda n: _google(f"intitle:{query}", n),
+        lambda n: _google(f'inauthor:"{query}"', n))
 
 
 # --------------------------------------------------------------------------- #
@@ -163,30 +175,89 @@ OL_FIELDS = ("key,title,author_name,author_key,isbn,cover_i,subject,first_publis
              "editions,editions.isbn,editions.cover_i,editions.title")
 
 
-def search_openlibrary(query: str, limit: int = 10) -> list[BookResult]:
-    isbn13 = isbn_utils.normalize(query)
-    params = {"fields": OL_FIELDS, "limit": limit, "lang": "en"}
-    if isbn13:
-        params["isbn"] = isbn13
-    else:
-        params["title"] = query
+def _openlibrary(field_name: str, value: str, limit: int) -> list[BookResult]:
+    params = {"fields": OL_FIELDS, "limit": limit, "lang": "en", field_name: value}
     data = _get("https://openlibrary.org/search.json", params)
     results = [_parse_openlibrary(doc) for doc in data.get("docs", [])]
-    results = [r for r in results if r]
-    if isbn13:  # the edition searched for is the one the user wants
-        for r in results:
+    return [r for r in results if r]
+
+
+def search_openlibrary(query: str, limit: int = 10) -> list[BookResult]:
+    isbn13 = isbn_utils.normalize(query)
+    if isbn13:
+        results = _openlibrary("isbn", isbn13, limit)
+        for r in results:  # the edition searched for is the one the user wants
             r.isbn, r.isbn10 = isbn13, isbn_utils.isbn13_to_10(isbn13)
-    return results[:limit]
+        return results[:limit]
+    return _title_and_author(
+        query, limit,
+        lambda n: _openlibrary("title", query, n),
+        lambda n: _openlibrary("author", query, n))
+
+
+# --------------------------------------------------------------------------- #
+# Title + author searching
+# --------------------------------------------------------------------------- #
+def _words(text: str | None) -> list[str]:
+    """Lower-case words with accents removed ('Gabriel García Márquez' -> garcia...)."""
+    plain = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode()
+    return re.findall(r"[a-z0-9]+", plain.lower())
+
+
+def _author_matches(book: BookResult, query_words: list[str]) -> bool:
+    """True if every word of the query appears in the book's author name(s)."""
+    return bool(query_words) and set(query_words) <= set(_words(book.author))
+
+
+def _dedupe(books: list[BookResult]) -> list[BookResult]:
+    """Drop repeats of the same book (same ISBN, or same title + author)."""
+    seen, out = set(), []
+    for b in books:
+        keys = {("t", " ".join(_words(b.title)), " ".join(_words(b.author)))}
+        if b.isbn:
+            keys.add(("i", b.isbn))
+        if keys & seen:
+            continue
+        seen |= keys
+        out.append(b)
+    return out
+
+
+def _title_and_author(query: str, limit: int,
+                      by_title: Callable[[int], list[BookResult]],
+                      by_author: Callable[[int], list[BookResult]]) -> list[BookResult]:
+    """Search by title and by author, and put the author's own books first.
+
+    If the query is an author's name (every word of it is in a result's author
+    field) the list grows to AUTHOR_LIMIT books so you see their whole shelf.
+    Otherwise it behaves like a plain title search.
+    """
+    words = _words(query)
+    results, errors = {}, []
+    for name, fn, n in (("title", by_title, limit), ("author", by_author, AUTHOR_LIMIT)):
+        try:
+            results[name] = fn(n)
+        except Exception as exc:
+            errors.append(exc)
+            results[name] = []
+    if len(errors) == 2:
+        raise errors[0]
+    author_books = [b for b in results["author"] if _author_matches(b, words)]
+    if not author_books:
+        return _dedupe(results["title"])[:limit]
+    # Books by that author first, then title matches (e.g. books *about* them).
+    merged = _dedupe(author_books + [b for b in results["title"] if not _author_matches(b, words)])
+    return merged[:AUTHOR_LIMIT]
 
 
 # --------------------------------------------------------------------------- #
 # Public entry point
 # --------------------------------------------------------------------------- #
 def search_books(query: str, limit: int = 10) -> tuple[list[BookResult], str]:
-    """Search by title or ISBN. Returns (results, message about the source used)."""
+    """Search by title, author name or ISBN. Returns (results, message about the source used)."""
     query = (query or "").strip()
     if not query:
-        return [], "Type a title or ISBN to search."
+        return [], "Type a title, author or ISBN to search."
     problems = []
     for name, fn in (("Google Books", search_google), ("Open Library", search_openlibrary)):
         try:
