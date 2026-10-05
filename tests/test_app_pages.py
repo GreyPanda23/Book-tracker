@@ -59,7 +59,8 @@ def test_tabs_and_edit(temp_db):
     conn.close()
     at = run("views/my_books.py")
     labels = [t.label for t in at.tabs]
-    assert labels[0].endswith("To Read (1)") and labels[1].endswith("Read (1)")
+    assert labels[0].endswith("To Read (1)") and labels[1].endswith("Currently Reading (0)") \
+        and labels[2].endswith("Read (1)")
     # Edit Dune (first tab): set Read, 4 stars, notes
     at.selectbox[0].set_value("Read")
     at.text_area[0].input("Loved it")
