@@ -1,0 +1,19 @@
+{
+  "name": "book-tracker-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "tunnel": "expo start --tunnel",
+    "ios": "expo start --ios"
+  },
+  "dependencies": {
+    "expo": "latest",
+    "expo-status-bar": "latest",
+    "react": "latest",
+    "react-native": "latest",
+    "react-native-safe-area-context": "latest",
+    "react-native-webview": "latest"
+  }
+}
