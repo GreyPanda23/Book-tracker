@@ -9,11 +9,11 @@
     "ios": "expo start --ios"
   },
   "dependencies": {
-    "expo": "latest",
-    "expo-status-bar": "latest",
-    "react": "latest",
-    "react-native": "latest",
-    "react-native-safe-area-context": "latest",
-    "react-native-webview": "latest"
+    "expo": "~57.0.27",
+    "expo-status-bar": "~57.0.1",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-webview": "13.16.1"
   }
 }
