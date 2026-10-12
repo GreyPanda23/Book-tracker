@@ -24,39 +24,42 @@ def clear_search() -> None:
 
 
 box, clear = st.columns([6, 1], vertical_alignment="center")
-search = box.text_input("Filter", placeholder=f"Filter {words['lower']} by title, author or genre",
+search = box.text_input("Filter", placeholder=f"Filter {words['lower']} by title, " + ("author or genre" if words["kind"] == "book" else "year or genre"),
                         label_visibility="collapsed", key=f"my_books_filter_{words['kind']}")
 clear.button("✖ Clear", key=f"my_books_clear_{words['kind']}", disabled=not search, on_click=clear_search,
              help="Clear the search and go back to the section tabs")
 if search:
     s = search.lower()
     books = [b for b in books if s in " ".join(
-        str(b[k] or "") for k in ("title", "author", "genre")).lower()]
+        str(b[k] or "") for k in ("title", "author", "year", "genre")).lower()]
 
 by_status = {s: [b for b in books if b["status"] == s] for s in db.STATUSES}
 
 
 def edit_form(book: dict, key: str) -> None:
     with st.form(f"edit_{key}"):
-        status = st.selectbox("Status", db.STATUSES, index=db.STATUSES.index(book["status"]))
+        status = st.selectbox("Status", db.STATUSES, index=db.STATUSES.index(book["status"]),
+                              format_func=lambda s: ui.status_label(s, book["kind"]))
         rating = st.feedback("stars", default=(book["rating"] - 1) if book["rating"] else None,
                              key=f"rating_{key}")
         notes = st.text_area("Notes", value=book["notes"] or "")
-        c1, c2 = st.columns(2)
-        target = c1.number_input("Alert me below (AED)", min_value=0.0, step=5.0,
-                                 value=float(book["target_price"] or 0),
-                                 help="E-mail alert when a To Read book drops below this price. 0 = off")
-        isbn = c2.text_input("ISBN (edition used for prices)", value=book["isbn"] or "")
+        if book["kind"] == "book":
+            c1, c2 = st.columns(2)
+            target = c1.number_input("Alert me below (AED)", min_value=0.0, step=5.0,
+                                     value=float(book["target_price"] or 0),
+                                     help="E-mail alert when a To Read book drops below this price. 0 = off")
+            isbn = c2.text_input("ISBN (edition used for prices)", value=book["isbn"] or "")
         if st.form_submit_button("Save changes", type="primary"):
-            changes = dict(status=status, notes=notes or None, isbn=isbn or None,
-                           rating=(rating + 1) if rating is not None else None,
-                           target_price=target or None)
+            changes = dict(status=status, notes=notes or None,
+                           rating=(rating + 1) if rating is not None else None)
+            if book["kind"] == "book":
+                changes.update(isbn=isbn or None, target_price=target or None)
             if ui.save(lambda c: db.update_book(c, book["id"], **changes),
                        f"Update book: {book['title']}"):
                 st.toast("Saved")
                 st.rerun()
-    if st.button("🗑️ Delete this book", key=f"del_{key}"):
-        if ui.save(lambda c: db.delete_book(c, book["id"]), f"Delete book: {book['title']}"):
+    if st.button(f"🗑️ Delete this {words['singular']}", key=f"del_{key}"):
+        if ui.save(lambda c: db.delete_book(c, book["id"]), f"Delete {words['singular']}: {book['title']}"):
             st.rerun()
 
 
@@ -69,8 +72,9 @@ def show(book_list: list[dict], tab_key: str) -> None:
             with left:
                 ui.cover(book["cover_url"], width=80)
             with right:
-                st.markdown(f"**{book['title']}**  \n{book['author'] or 'Unknown author'}")
-                meta = [ui.STATUS_ICONS[book["status"]] + " " + book["status"],
+                byline = (book["author"] or "Unknown author") if words["kind"] == "book" else (book["year"] or "")
+                st.markdown(f"**{book['title']}**  \n{byline}")
+                meta = [ui.STATUS_ICONS[book["status"]] + " " + ui.status_label(book["status"]),
                         book["genre"], ui.stars(book["rating"])]
                 st.caption(" · ".join(filter(None, meta)))
                 if book["notes"]:
@@ -85,10 +89,10 @@ if search:
         st.info(f"No {words['singular']} in your list matches that.")
     for status in db.STATUSES:
         if by_status[status]:
-            st.subheader(f"{ui.STATUS_ICONS[status]} {status} ({len(by_status[status])})")
+            st.subheader(f"{ui.STATUS_ICONS[status]} {ui.status_label(status)} ({len(by_status[status])})")
             show(by_status[status], status)
 else:
-    tabs = st.tabs([f"{ui.STATUS_ICONS[s]} {s} ({len(by_status[s])})" for s in db.STATUSES]
+    tabs = st.tabs([f"{ui.STATUS_ICONS[s]} {ui.status_label(s)} ({len(by_status[s])})" for s in db.STATUSES]
                    + [f"All ({len(books)})"])
     for tab, status in zip(tabs, [*db.STATUSES, None]):
         with tab:

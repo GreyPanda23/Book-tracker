@@ -14,11 +14,16 @@ Dubai and online in the UAE. Prices are checked automatically every Sunday.
 
 ## What's in the app
 
-Use the **Library** switch at the top of the sidebar to flip between **📚 Books** and
-**🎌 Manga**. Every page below works the same way in both libraries and only shows the
-one you picked. Manga data comes from AniList (free, no key); manga are listed by
-series, so they have no ISBN. Weekly price checks for manga match by title; add the
-ISBN of a specific volume (Edit) to price that exact one.
+Use the **Library** switch at the top of the sidebar to flip between **📚 Books**,
+**🎬 Movies** and **📺 TV Shows**. Every page below works the same way in all three
+libraries and only shows the one you picked (movies and TV shows say *To Watch / Watching /
+Watched* instead of *To Read / Currently Reading / Read*, and have no **Prices** page).
+
+Movies and TV shows come from [TMDB](https://www.themoviedb.org) (free, but it needs a key):
+create an account, open *Settings → API*, and put the **API Key** in `TMDB_API_KEY` (in `.env`,
+and in the Streamlit Cloud *Secrets* box for the phone app). They are told apart by title and
+release year, so a remake is its own entry. *This product uses the TMDB API but is not
+endorsed or certified by TMDB.*
 
 | Page | What you can do |
 |---|---|

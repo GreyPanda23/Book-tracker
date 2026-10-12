@@ -11,6 +11,7 @@ Tables
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,7 +20,7 @@ from typing import Any, Iterable
 from . import config, isbn as isbn_utils
 
 STATUSES = ("To Read", "Currently Reading", "Read", "Dropped")
-KINDS = ("book", "manga")
+KINDS = ("book", "movie", "tv")
 PRICE_TYPES = ("online", "in-store")
 MATCH_METHODS = ("isbn", "title_author")
 
@@ -32,9 +33,10 @@ CREATE TABLE IF NOT EXISTS books (
     isbn10        TEXT,
     cover_url     TEXT,
     genre         TEXT,
+    year          TEXT,                     -- release year (movies and TV shows)
     status        TEXT NOT NULL DEFAULT 'To Read'
                   CHECK (status IN ('To Read', 'Currently Reading', 'Read', 'Dropped')),
-    kind          TEXT NOT NULL DEFAULT 'book' CHECK (kind IN ('book', 'manga')),
+    kind          TEXT NOT NULL DEFAULT 'book' CHECK (kind IN ('book', 'movie', 'tv')),
     date_added    TEXT NOT NULL,
     date_finished TEXT,                     -- set when status becomes Read/Dropped
     rating        INTEGER CHECK (rating IS NULL OR rating BETWEEN 1 AND 5),
@@ -87,7 +89,7 @@ CREATE TABLE IF NOT EXISTS fetch_log (
 """
 
 EDITABLE_BOOK_FIELDS = {
-    "title", "author", "isbn", "isbn10", "cover_url", "genre", "status", "kind",
+    "title", "author", "isbn", "isbn10", "cover_url", "genre", "year", "status", "kind",
     "date_finished", "rating", "notes", "target_price",
 }
 
@@ -114,32 +116,47 @@ def connect(path: str | Path | None = None) -> sqlite3.Connection:
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
-    """Upgrade databases created before 'Currently Reading' existed.
+    """Upgrade databases created by older versions of the app.
 
-    SQLite can't change a CHECK constraint in place, so the books table is
-    rebuilt (same columns, same ids; prices and links keep pointing at them).
+    SQLite can't change a CHECK constraint in place, so when one has to change the
+    books table is rebuilt (same columns, same ids; prices and links keep pointing at them).
     """
-    sql = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'books'").fetchone()[0]
+    sql = _books_sql(conn)
     if "Currently Reading" not in sql:
-        _rebuild_books_for_new_status(conn, sql)
+        _rebuild_books(conn, sql.replace(
+            "CHECK (status IN ('To Read', 'Read', 'Dropped'))",
+            "CHECK (status IN ('To Read', 'Currently Reading', 'Read', 'Dropped'))"))
     columns = {row[1] for row in conn.execute("PRAGMA table_info(books)")}
-    if "kind" not in columns:   # databases from before the Manga library existed
+    if "kind" not in columns:   # databases from before the Movies / TV libraries existed
         conn.execute("ALTER TABLE books ADD COLUMN kind TEXT NOT NULL DEFAULT 'book' "
-                     "CHECK (kind IN ('book', 'manga'))")
+                     "CHECK (kind IN ('book', 'movie', 'tv'))")
+    if "year" not in columns:
+        conn.execute("ALTER TABLE books ADD COLUMN year TEXT")
+    conn.commit()
+    sql = _books_sql(conn)
+    if "'manga'" in sql:        # the Manga library was removed
+        conn.execute("DELETE FROM books WHERE kind = 'manga'")   # prices and links go with them
         conn.commit()
+        _rebuild_books(conn, re.sub(r"CHECK \(kind IN \([^)]*\)\)",
+                                    "CHECK (kind IN ('book', 'movie', 'tv'))", sql))
 
 
-def _rebuild_books_for_new_status(conn: sqlite3.Connection, sql: str) -> None:
+def _books_sql(conn: sqlite3.Connection) -> str:
+    return conn.execute("SELECT sql FROM sqlite_master WHERE name = 'books'").fetchone()[0]
+
+
+def _rebuild_books(conn: sqlite3.Connection, new_sql: str) -> None:
+    """Replace the books table by one created from `new_sql`, keeping every row."""
     conn.commit()
     conn.execute("PRAGMA foreign_keys = OFF")
     try:
-        new_sql = sql.replace("CHECK (status IN ('To Read', 'Read', 'Dropped'))",
-                              "CHECK (status IN ('To Read', 'Currently Reading', 'Read', 'Dropped'))")
-        new_sql = new_sql.replace("CREATE TABLE books", "CREATE TABLE books_new", 1)
-        new_sql = new_sql.replace('CREATE TABLE "books"', "CREATE TABLE books_new", 1)
+        new_sql = re.sub(r'CREATE TABLE "?books"?', "CREATE TABLE books_new", new_sql, count=1)
         conn.execute("BEGIN")
         conn.execute(new_sql)
-        conn.execute("INSERT INTO books_new SELECT * FROM books")
+        old = [row[1] for row in conn.execute("PRAGMA table_info(books)")]
+        new = {row[1] for row in conn.execute("PRAGMA table_info(books_new)")}
+        cols = ", ".join(c for c in old if c in new)
+        conn.execute(f"INSERT INTO books_new ({cols}) SELECT {cols} FROM books")
         conn.execute("DROP TABLE books")
         conn.execute("ALTER TABLE books_new RENAME TO books")
         conn.commit()
@@ -187,7 +204,7 @@ def add_book(conn: sqlite3.Connection, **fields: Any) -> int:
     """Insert a book and return its id.
 
     If a book with the same ISBN already exists (or, without an ISBN, the same
-    title and author in the same library), nothing is inserted and the existing
+    title and author - or year, for movies and TV shows - in the same library), nothing is inserted and the existing
     id is returned (so adding twice never creates duplicates).
     """
     if not fields.get("title"):
@@ -198,7 +215,8 @@ def add_book(conn: sqlite3.Connection, **fields: Any) -> int:
         if existing:
             return existing["id"]
     else:
-        existing = find_book(conn, fields.get("kind", "book"), fields["title"], fields.get("author"))
+        existing = find_book(conn, fields.get("kind", "book"), fields["title"], fields.get("author"),
+                             fields.get("year"))
         if existing:
             return existing["id"]
     fields.setdefault("status", "To Read")
@@ -217,11 +235,18 @@ def get_book(conn: sqlite3.Connection, book_id: int) -> dict | None:
     return dict(row) if row else None
 
 
-def find_book(conn: sqlite3.Connection, kind: str, title: str, author: str | None = None) -> dict | None:
-    """A book of this kind with the same title and author (ignoring case), if any."""
-    row = conn.execute(
-        "SELECT * FROM books WHERE kind = ? AND lower(title) = lower(?) "
-        "AND lower(coalesce(author, '')) = lower(?)", (kind, title.strip(), (author or "").strip())).fetchone()
+def find_book(conn: sqlite3.Connection, kind: str, title: str, author: str | None = None,
+              year: str | None = None) -> dict | None:
+    """An entry of this kind with the same title (ignoring case) and author - for movies and
+    TV shows, the same release year instead (a remake is a different entry), if any."""
+    if kind == "book":
+        row = conn.execute(
+            "SELECT * FROM books WHERE kind = ? AND lower(title) = lower(?) "
+            "AND lower(coalesce(author, '')) = lower(?)", (kind, title.strip(), (author or "").strip())).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT * FROM books WHERE kind = ? AND lower(title) = lower(?) "
+            "AND (? IS NULL OR year IS NULL OR year = ?)", (kind, title.strip(), year, year)).fetchone()
     return dict(row) if row else None
 
 
@@ -235,7 +260,7 @@ def get_book_by_isbn(conn: sqlite3.Connection, isbn: str) -> dict | None:
 
 def list_books(conn: sqlite3.Connection, status: str | None = None,
                kind: str | None = None) -> list[dict]:
-    """All books (newest first), optionally only one status and/or one kind (book/manga)."""
+    """All books (newest first), optionally only one status and/or one kind (book/movie/tv)."""
     where, args = [], []
     if status:
         if status not in STATUSES:

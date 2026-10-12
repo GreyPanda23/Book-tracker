@@ -52,7 +52,7 @@ def run(stores: list[str] | None = None, use_sync: bool = True) -> int:
         log.info("downloading the latest database from GitHub…")
         sync.pull()
     conn = db.connect()
-    books = db.list_books(conn, "To Read")
+    books = db.list_books(conn, "To Read", kind="book")
     links = db.store_links(conn)
     conn.close()
     log.info("checking prices for %d To Read book(s)", len(books))

@@ -16,26 +16,40 @@ STATUS_ICONS = {"To Read": "📖", "Currently Reading": "📘", "Read": "✅", "
 PLACEHOLDER_COVER = "https://placehold.co/128x192?text=No+cover"
 
 
-LIBRARIES = {"📚 Books": "book", "🎌 Manga": "manga"}
+LIBRARIES = {"📚 Books": "book", "🎬 Movies": "movie", "📺 TV Shows": "tv"}
+
+# Movies and TV shows keep the same four stored statuses; only the wording changes.
+WATCH_STATUSES = {"To Read": "To Watch", "Currently Reading": "Watching", "Read": "Watched",
+                  "Dropped": "Dropped"}
+WORDS = {
+    "book": {"kind": "book", "icon": "📚", "plural": "Books", "lower": "books", "singular": "book",
+             "my": "My Books", "add": "Add a Book", "statuses": {s: s for s in WATCH_STATUSES},
+             "done": "Read"},
+    "movie": {"kind": "movie", "icon": "🎬", "plural": "Movies", "lower": "movies", "singular": "movie",
+              "my": "My Movies", "add": "Add a Movie", "statuses": WATCH_STATUSES, "done": "Watched"},
+    "tv": {"kind": "tv", "icon": "📺", "plural": "TV Shows", "lower": "TV shows", "singular": "TV show",
+           "my": "My TV Shows", "add": "Add a TV Show", "statuses": WATCH_STATUSES, "done": "Watched"},
+}
 
 
 def library_switch() -> None:
-    """The Books / Manga switch in the sidebar. Every page shows the chosen library."""
-    st.sidebar.radio("Library", list(LIBRARIES), key="library", horizontal=True)
+    """The Books / Movies / TV Shows switch in the sidebar. Every page shows the chosen library."""
+    st.sidebar.radio("Library", list(LIBRARIES), key="library")
 
 
 def current_kind() -> str:
-    """'book' or 'manga' - which library the switch is on (books if it hasn't been used)."""
+    """'book', 'movie' or 'tv' - which library the switch is on (books if it hasn't been used)."""
     return LIBRARIES.get(st.session_state.get("library"), "book")
 
 
-def kind_words(kind: str | None = None) -> dict[str, str]:
-    """Wording that changes between the libraries (page titles, search hints...)."""
-    if (kind or current_kind()) == "manga":
-        return {"kind": "manga", "icon": "🎌", "plural": "Manga", "lower": "manga", "singular": "manga",
-                "my": "My Manga", "add": "Add Manga"}
-    return {"kind": "book", "icon": "📚", "plural": "Books", "lower": "books", "singular": "book",
-            "my": "My Books", "add": "Add a Book"}
+def kind_words(kind: str | None = None) -> dict:
+    """Wording that changes between the libraries (page titles, status names, search hints...)."""
+    return WORDS[kind or current_kind()]
+
+
+def status_label(status: str, kind: str | None = None) -> str:
+    """How a stored status is shown in this library ('Read' is 'Watched' for movies)."""
+    return kind_words(kind)["statuses"][status]
 
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -143,9 +157,9 @@ def result_filters(results: list[BookResult], key: str) -> list[tuple[int, BookR
                                     placeholder="All authors")
         c3, c4, c5 = st.columns(3)
         min_rating = c3.slider("Minimum rating ★", 0.0, 5.0, 0.0, 0.5, key=f"{key}_rating",
-                               help="Books with no rating are hidden when this is above 0") \
+                               help="Results with no rating are hidden when this is above 0") \
             if has_ratings else 0.0
-        keep_unknown = c4.checkbox("Include books with no year", value=True, key=f"{key}_unknown")
+        keep_unknown = c4.checkbox(f"Include {kind_words()['lower']} with no year", value=True, key=f"{key}_unknown")
         hide_owned = c5.checkbox(f"Hide {kind_words()['lower']} I already have", value=False,
                                  key=f"{key}_owned")
         active = (bool(bounds) and tuple(years) != tuple(bounds)) or sort != SORT_OPTIONS[0] \
@@ -160,7 +174,7 @@ def result_filters(results: list[BookResult], key: str) -> list[tuple[int, BookR
     kept = filter_and_sort(results, years[0], years[1], sort, keep_unknown, picked, min_rating, owned)
     position = {id(b): i for i, b in shown}
     shown = [(position[id(b)], b) for b in kept]
-    st.caption(f"Showing {len(shown)} of {len(results)} books")
+    st.caption(f"Showing {len(shown)} of {len(results)} {kind_words()['lower']}")
     return shown
 
 
@@ -181,18 +195,19 @@ def result_cards(shown: list[tuple[int, BookResult]], key: str) -> None:
                         book.author, book.year, book.genre, rating,
                         (f"ISBN {book.isbn}" if book.isbn else "no ISBN") if kind == "book" else None])))
                     existing = (db.get_book_by_isbn(conn, book.isbn) if book.isbn else None) \
-                        or db.find_book(conn, kind, book.title, book.author)
+                        or db.find_book(conn, kind, book.title, book.author, book.year)
                     if existing:
-                        st.info(f"Already in your list ({existing['status']}).")
+                        st.info(f"Already in your list ({status_label(existing['status'], kind)}).")
                         continue
                     c1, c2 = st.columns([2, 1])
                     status = c1.selectbox("Status", db.STATUSES, key=f"{key}_status_{i}",
-                                          label_visibility="collapsed")
+                                          label_visibility="collapsed",
+                                          format_func=lambda s: status_label(s, kind))
                     if c2.button("Add", key=f"{key}_add_{i}", type="primary"):
                         fields = book.to_db_fields()
                         if save(lambda c: db.add_book(c, status=status, kind=kind, **fields),
-                                f"Add book: {book.title}"):
-                            st.toast(f"Added “{book.title}” to {status}")
+                                f"Add {kind_words(kind)['singular']}: {book.title}"):
+                            st.toast(f"Added “{book.title}” to {status_label(status, kind)}")
                             st.rerun()
     finally:
         conn.close()

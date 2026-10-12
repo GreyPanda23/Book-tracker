@@ -11,13 +11,13 @@ if not ui.check_password():
 
 ui.library_switch()
 
-words = ui.kind_words()   # sidebar names follow the Books / Manga switch
+words = ui.kind_words()   # sidebar names follow the Books / Movies / TV Shows switch
 pages = [
     st.Page("views/my_books.py", title=words["my"], icon=words["icon"], default=True),
     st.Page("views/add_book.py", title=words["add"], icon="➕"),
     st.Page("views/discover.py", title="Discover by Genre", icon="🧭"),
     st.Page("views/suggestions.py", title="Suggestions", icon="💡"),
-    st.Page("views/prices.py", title="Prices", icon="💰"),
+    *([st.Page("views/prices.py", title="Prices", icon="💰")] if words["kind"] == "book" else []),
     st.Page("views/stats.py", title="Stats", icon="📊"),
 ]
 st.navigation(pages).run()

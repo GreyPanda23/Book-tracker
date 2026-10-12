@@ -1,4 +1,4 @@
-"""Book suggestions.
+"""Book, movie and TV show suggestions.
 
 Free mode (always available): for one book, look it up on Open Library and
 suggest other works by the same author plus well-rated books sharing its
@@ -6,6 +6,8 @@ subjects.
 
 AI mode (optional): send your Read list and ratings to Claude and get
 personalised recommendations. Needs ANTHROPIC_API_KEY in `.env` / secrets.
+
+Movies and TV shows use TMDB (TMDB_API_KEY) for the free mode and for looking up Claude's picks.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ import logging
 import re
 from dataclasses import dataclass
 
-from . import book_search, config, manga_search
+from . import book_search, config, tmdb
 from .book_search import BookResult
 
 log = logging.getLogger("booktracker.suggestions")
@@ -35,9 +37,9 @@ class Suggestion:
     reason: str
 
 
-def similar_manga(book: dict, count: int = 5) -> list[Suggestion]:
-    """Other manga readers of this series liked, then more by the same creator."""
-    pairs = manga_search.similar_manga(book["title"], book.get("author"), count)
+def similar_media(kind: str, book: dict, count: int = 5) -> list[Suggestion]:
+    """Other movies / TV shows that fans of this one also watched."""
+    pairs = tmdb.similar(kind, book["title"], book.get("year"), count)
     return [Suggestion(b, reason) for b, reason in pairs]
 
 
@@ -162,12 +164,19 @@ def claude_available() -> bool:
     return bool(config.get_secret("ANTHROPIC_API_KEY"))
 
 
+# (what they are, what you did with the ones in the "done" status, your "to do" list)
+PROMPT_WORDS = {"book": ("books", "read", "to-read"), "movie": ("movies", "watched", "to-watch"),
+                "tv": ("TV shows", "watched", "to-watch")}
+
+
 def build_prompt(books: list[dict], count: int, kind: str = "book") -> str:
-    noun = "manga series" if kind == "manga" else "books"
+    noun, done, todo = PROMPT_WORDS[kind]
     def line(b: dict) -> str:
         parts = [f"- {b['title']}"]
         if b.get("author"):
             parts.append(f"by {b['author']}")
+        if b.get("year") and kind != "book":
+            parts.append(f"({b['year']})")
         if b.get("genre"):
             parts.append(f"[{b['genre']}]")
         if b.get("rating"):
@@ -176,22 +185,24 @@ def build_prompt(books: list[dict], count: int, kind: str = "book") -> str:
             parts.append(f"— my notes: {b['notes'][:200]}")
         return " ".join(parts)
 
-    read = [b for b in books if b["status"] == "Read"]
-    read.sort(key=lambda b: -(b.get("rating") or 0))
+    finished = [b for b in books if b["status"] == "Read"]
+    finished.sort(key=lambda b: -(b.get("rating") or 0))
     dropped = [b for b in books if b["status"] == "Dropped"]
     to_read = [b for b in books if b["status"] == "To Read"]
-    sections = [f"{noun.capitalize()} I have read (highest rated first):", *map(line, read)]
+    sections = [f"{noun.capitalize()} I have {done} (highest rated first):", *map(line, finished)]
     if dropped:
         sections += ["", f"{noun.capitalize()} I started but dropped (I did not enjoy these):", *map(line, dropped)]
     if to_read:
-        sections += ["", "Already on my to-read list (do not recommend these):",
+        sections += ["", f"Already on my {todo} list (do not recommend these):",
                      *(f"- {b['title']}" for b in to_read)]
+    creator = {"book": "author", "movie": "director", "tv": "creator"}[kind]
     sections += [
         "",
-        f"Recommend {count} {noun} I have not read yet that I am likely to enjoy, based on what I "
-        "rated highly and what I dropped. Only real, published titles with their correct author. "
+        f"Recommend {count} {noun} I have not {done} yet that I am likely to enjoy, based on what I "
+        "rated highly and what I dropped. Only real, published titles with their correct "
+        f"{creator} (put the {creator}'s name in the \"author\" field). "
         "Do not recommend anything listed above. For each, give a one-sentence reason that "
-        "refers to specific books from my list.",
+        f"refers to specific {noun} from my list.",
     ]
     return "\n".join(sections)
 
@@ -201,7 +212,8 @@ def claude_recommendations(books: list[dict], count: int = 5, kind: str = "book"
     import anthropic
 
     if not any(b["status"] == "Read" for b in books):
-        raise ValueError("Mark at least one as Read (ideally with a rating) first.")
+        done = PROMPT_WORDS[kind][1].capitalize()
+        raise ValueError(f"Mark at least one as {done} (ideally with a rating) first.")
     client = anthropic.Anthropic(api_key=config.get_secret("ANTHROPIC_API_KEY"))
     response = client.beta.messages.create(
         model=config.get_secret("CLAUDE_MODEL", "claude-opus-5-5"),
@@ -210,8 +222,9 @@ def claude_recommendations(books: list[dict], count: int = 5, kind: str = "book"
         fallbacks="default",
         output_config={"effort": "medium",
                        "format": {"type": "json_schema", "schema": CLAUDE_SCHEMA}},
-        system=("You are a knowledgeable, honest manga recommender." if kind == "manga"
-                else "You are a well-read, honest book recommender."),
+        system={"book": "You are a well-read, honest book recommender.",
+                "movie": "You are a knowledgeable, honest movie recommender.",
+                "tv": "You are a knowledgeable, honest TV show recommender."}[kind],
         messages=[{"role": "user", "content": build_prompt(books, count, kind)}],
     )
     if response.stop_reason == "refusal":
@@ -226,16 +239,16 @@ def claude_recommendations(books: list[dict], count: int = 5, kind: str = "book"
             continue
         found = None
         try:
-            if kind == "manga":
-                hits, _ = manga_search.search_manga(rec["title"], 3)
-                found = hits[0] if hits else None
-                hits = []
-            else:
+            if kind == "book":
                 hits = book_search.search_openlibrary(f"{rec['title']}", 5)
-            author_first = rec["author"].split()[-1].lower() if rec["author"] else ""
-            found = found or next((h for h in hits if author_first in (h.author or "").lower()), None)
+                author_first = rec["author"].split()[-1].lower() if rec["author"] else ""
+                found = next((h for h in hits if author_first in (h.author or "").lower()), None)
+            else:
+                hits, _ = tmdb.search_media(kind, rec["title"], 3)
+                found = hits[0] if hits else None
         except Exception as exc:
             log.warning("could not look up %s: %s", rec["title"], exc)
-        book = found or BookResult(title=rec["title"], author=rec["author"], source="Claude")
+        book = found or BookResult(title=rec["title"], author=rec["author"] if kind == "book" else None,
+                                   source="Claude")
         suggestions.append(Suggestion(book, rec["reason"]))
     return suggestions

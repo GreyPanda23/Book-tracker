@@ -1,4 +1,4 @@
-"""Reading statistics."""
+"""Reading / watching statistics."""
 
 from datetime import date
 
@@ -22,11 +22,11 @@ rate = stats.drop_rate(books)
 avg = stats.average_rating(books)
 
 c1, c2 = st.columns(2)
-c1.metric(f"Read in {year}", len(read_this_year))
-c2.metric("To Read", sum(b["status"] == "To Read" for b in books))
+c1.metric(f"{words['done']} in {year}", len(read_this_year))
+c2.metric(ui.status_label("To Read"), sum(b["status"] == "To Read" for b in books))
 c3, c4 = st.columns(2)
 c3.metric("Drop rate", f"{rate:.0%}" if rate is not None else "—",
-          help="Dropped ÷ (Read + Dropped)")
+          help=f"Dropped ÷ ({words['done']} + Dropped)")
 c4.metric("Average rating", f"{avg:.1f} ★" if avg else "—",
           help=f"Across all {words['lower']} you've rated")
 
@@ -34,7 +34,7 @@ dark = ui.is_dark()
 st.subheader(f"{words['plural']} finished per month ({year})")
 monthly = charts.bar_chart(stats.reads_per_month(books, year), words["plural"], dark=dark, horizontal=False)
 if monthly is None:
-    st.caption("Mark some as Read to fill this chart.")
+    st.caption(f"Mark some as {words['done']} to fill this chart.")
 else:
     st.altair_chart(monthly, width="stretch")
 

@@ -71,7 +71,7 @@ class BookResult:
 
     def to_db_fields(self) -> dict:
         data = asdict(self)
-        for key in ("year", "source", "subjects", "rating", "popularity"):
+        for key in ("source", "subjects", "rating", "popularity"):
             data.pop(key)
         return data
 
@@ -218,10 +218,11 @@ def _author_matches(book: BookResult, query_words: list[str]) -> bool:
 
 
 def _dedupe(books: list[BookResult]) -> list[BookResult]:
-    """Drop repeats of the same book (same ISBN, or same title + author)."""
+    """Drop repeats of the same book (same ISBN, or same title + author; movies and
+    TV shows have no author, so their release year tells a remake apart)."""
     seen, out = set(), []
     for b in books:
-        keys = {("t", " ".join(_words(b.title)), " ".join(_words(b.author)))}
+        keys = {("t", " ".join(_words(b.title)), " ".join(_words(b.author)) or b.year or "")}
         if b.isbn:
             keys.add(("i", b.isbn))
         if keys & seen:
@@ -274,14 +275,14 @@ def year_bounds(books: list[BookResult]) -> tuple[int, int] | None:
     return (min(years), max(years)) if years else None
 
 
-def _title_key(title: str | None, author: str | None) -> str:
+def _title_key(title: str | None, author: str | None, year: str | None = None) -> str:
     first_author = (author or "").split(",")[0]
-    return "t:" + " ".join(_words(title)) + "|" + " ".join(_words(first_author))
+    return "t:" + " ".join(_words(title)) + "|" + (" ".join(_words(first_author)) or year or "")
 
 
 def book_keys(book: BookResult) -> set[str]:
     """Identifiers used to spot a book you already have: its ISBN and its title + author."""
-    keys = {_title_key(book.title, book.author)}
+    keys = {_title_key(book.title, book.author, book.year)}
     if book.isbn:
         keys.add(book.isbn)
     return keys
@@ -291,7 +292,7 @@ def owned_keys(rows: list[dict]) -> set[str]:
     """`book_keys` for every saved book (database rows)."""
     keys: set[str] = set()
     for r in rows:
-        keys.add(_title_key(r["title"], r.get("author")))
+        keys.add(_title_key(r["title"], r.get("author"), r.get("year")))
         if r.get("isbn"):
             keys.add(r["isbn"])
     return keys

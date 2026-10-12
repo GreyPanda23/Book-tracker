@@ -63,7 +63,7 @@ def test_empty_query():
 
 def test_to_db_fields_only_has_columns():
     fields = bs._parse_google(GOOGLE_ITEM).to_db_fields()
-    assert set(fields) == {"title", "author", "isbn", "isbn10", "cover_url", "genre"}
+    assert set(fields) == {"title", "author", "isbn", "isbn10", "cover_url", "genre", "year"}
 
 
 @pytest.mark.live

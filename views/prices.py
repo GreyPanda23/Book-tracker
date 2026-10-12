@@ -6,7 +6,7 @@ import streamlit as st
 from booktracker import charts, db, ui
 from booktracker.fetchers.registry import load_store_configs
 
-words = ui.kind_words()
+words = ui.kind_words("book")   # only books are sold in the stores
 st.title(f"💰 {words['plural']} Prices")
 
 conn = ui.get_conn()
@@ -37,10 +37,6 @@ with right:
                                         f"🎯 target AED {book['target_price']:.0f}" if book["target_price"] else None])))
     if book["status"] != "To Read":
         st.caption(f"ℹ️ Prices are only checked for {words['lower']} marked **To Read**.")
-    if words["kind"] == "manga" and not book["isbn"]:
-        st.caption("ℹ️ Manga are listed by series, so prices come from matching the title and may be "
-                   "for a different volume. Edit the manga and add the ISBN of a specific volume "
-                   "(e.g. volume 1) to price that exact one.")
 
 priced = [p for p in latest if p["price_aed"] is not None]
 if not priced:

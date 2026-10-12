@@ -1,8 +1,8 @@
-"""Browse books or manga by genre (pick one or several), then filter and add them."""
+"""Browse books, movies or TV shows by genre (pick one or several), then filter and add them."""
 
 import streamlit as st
 
-from booktracker import book_search, db, manga_search, ui
+from booktracker import book_search, db, tmdb, ui
 from booktracker.book_search import owned_keys
 
 kind = ui.current_kind()
@@ -11,14 +11,21 @@ st.title(f"🧭 Discover {words['plural']} by Genre")
 st.caption(f"Pick one or more genres to see popular {words['lower']} in them. Narrow the results by "
            "year, author or rating, then add what looks good.")
 
-genre_names = manga_search.MANGA_GENRE_NAMES if kind == "manga" else book_search.GENRE_NAMES
-find = manga_search.search_manga_by_genres if kind == "manga" else book_search.search_by_genres
-surprise_fn = manga_search.surprise_manga if kind == "manga" else book_search.surprise_me
-hint = ("e.g. tournament, pirates, cooking" if kind == "manga" else "e.g. dragons, detective, Japan")
+if kind == "book":
+    genre_names = book_search.GENRE_NAMES
+    find = book_search.search_by_genres
+    surprise_fn = book_search.surprise_me
+    hint = "e.g. dragons, detective, Japan"
+else:
+    genre_names = tmdb.GENRE_NAMES[kind]
+    find = lambda genres, match_all, keyword: tmdb.search_by_genres(kind, genres, match_all, keyword)
+    surprise_fn = lambda genres, owned: tmdb.surprise(kind, genres, owned)
+    hint = "e.g. heist, space, courtroom"
+    if not tmdb.available():
+        st.warning(tmdb.NO_KEY)
 
 with st.form("discover"):
-    genres = st.multiselect("Genres" + (" and themes" if kind == "manga" else ""), genre_names,
-                            placeholder="Choose one or more")
+    genres = st.multiselect("Genres", genre_names, placeholder="Choose one or more")
     c1, c2 = st.columns([1, 2])
     mode = c1.radio("Match", ["All of them", "Any of them"], horizontal=True,
                     help="'All' = only those in every genre you picked (e.g. Fantasy + Mystery). "
